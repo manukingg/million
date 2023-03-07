@@ -1,23 +1,69 @@
 import telebot
+import mysql.connector
+from mysql.connector import Error
 from telebot import types
 
 bot = telebot.TeleBot('5826517455:AAEga_2bdw5IcwKpyPunegxYCQWulH5o9uM')
 button_home = types.InlineKeyboardButton(text='Home', callback_data='home')
-INSTRUCTION_TEXT = '''<b>Instructions:</b>'
-<b>1</b>. Create your own server, by pressing <b>\'Purchase\'</b> button in the home menu. Perform the following steps and after that, you will get a special link.'
+INSTRUCTION_TEXT = '''<b>Instructions:</b>
+<b>1</b>. Create your own server, by pressing <b>\'Purchase\'</b> button in the home menu. Perform the following steps and after that, you will get a special link.
 
-<em>Example: ss://Y2hhY...jCy5</em>'
+<em>Example: ss://Y2hhY...jCy5</em>
 
 <b>2.</b> To connect to your server, you need to download a free app <b>Outline*</b>.'
 
-<b>3</b>. Copy your personal link and open <b>Outline</b> (it should automatically paste your link in). Press <b>\'Add server\'</b> and then <b>\'Connect\'.</b> (If the link did not pasted automatically, press <b>\'+\'</b> at the top-right corner and paste your link there).'
+<b>3</b>. Copy your personal link and open <b>Outline</b> (it should automatically paste your link in). Press <b>\'Add server\'</b> and then <b>\'Connect\'.</b> (If the link did not pasted automatically, press <b>\'+\'</b> at the top-right corner and paste your link there).
 
 <b>4</b>. You\'re in! Feel free to use your internet to it\'s full potential.
 
 <b>*</b>You can download <b>Outline</b> using menu below'''
 
+
+db_name = 'users_database'
+mysql_password = 'hatbot3401350'
+start_counter = 0
+
+def create_db_connection(host_name, user_name, user_password, auth_plug, db_name):
+    connection = None
+    try:
+        connection = mysql.connector.connect(
+            host = host_name,
+            user = user_name,
+            password = user_password,
+            auth_plugin = auth_plug,
+            database = db_name
+        )
+        print('MySQL database connection successful')
+    except Error as err:
+        print(f"Error: '{err}'")
+    return connection
+
+def execute_query(connection, query):
+    cursor = connection.cursor()
+    try:
+        cursor.execute(query)
+        connection.commit()
+        print("Query was successful")
+    except Error as err:
+        print("Error: '{err}'")
+
+connection = create_db_connection('localhost', 'root', mysql_password, 'mysql_native_password', db_name) #connecting to mysql "users_database"
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    cursor = connection.cursor()
+    query = """SELECT chat_id FROM users_info WHERE chat_id = (%s)"""
+    chat_id = message.chat.id
+    username = message.from_user.username
+    cursor.execute(query, (chat_id,))
+    result = cursor.fetchone()
+    if result is None:
+        query = """INSERT INTO users_info (chat_id, user_nickname) VALUES (%s, %s)"""
+        cursor.execute(query, (chat_id, username))
+        connection.commit()
+        print('successfully inserted chat id and username: ', chat_id, ', username: ', username)
+    else:
+        print("chat_id already presents")
     markup = types.InlineKeyboardMarkup(row_width=2)
     button_purchase = types.InlineKeyboardButton(text='Purchase', callback_data='purchase')
     button_manage = types.InlineKeyboardButton(text='Manage my account', callback_data='manage')
