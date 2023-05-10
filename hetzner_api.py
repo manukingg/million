@@ -6,7 +6,7 @@ import paramiko
 
 API_TOKEN = 'NOSsbf93NQYRCQsb1kr3CoSLQTXRbvVraoNSJDPjIkdZYdZSZzRUOaTt8Zi4q4BS'
 SSH_KEY = 'Main'
-SERVER_NAME = 'test-server123'
+SERVER_NAME = 'test-server123456789123'
 SERVER_TYPE = 'cx11'
 SERVER_IMAGE = 'docker-ce'
 SERVER_LOCATION = 'hel1'
@@ -26,12 +26,6 @@ def create_server():
     print(f'Server created with this IP: {server_ip}')
     print("Root Password: ", response.root_password)
     print(server)
-    ssh_client = paramiko.SSHClient()
-    ssh_client.set_missing_host_key_policy(paramiko.WarningPolicy())
-    ssh_client.connect(hostname=response.server.public_net.ipv4.ip, username='root')
-    stdin, stdout, stderr = ssh_client.exec_command('ls -la')
-    print(stdout.read().decode('utf-8'))
-    ssh_client.close()
 
 if __name__ == '__main__':
     create_server()

@@ -14,9 +14,9 @@ import docker
 import random
 import string
 import secrets
-import paramiko
 from dateutil.relativedelta import relativedelta
-import os
+import subprocess
+import threading
 
 INSTRUCTION_TEXT = '''<b>Instructions:</b>
 <b>1</b>. Create your own server, by pressing <b>\'Purchase\'</b> button in the home menu. Perform the following steps and after that, you will get a special link.
@@ -30,6 +30,7 @@ INSTRUCTION_TEXT = '''<b>Instructions:</b>
 <b>4</b>. You\'re in! Feel free to use your internet to it\'s full potential.
 
 <b>*</b>You can download <b>Outline</b> using the menu below'''
+
 PURCHASE_TEXT = '''HumanVPN only has one available plan for now:
 - 1 server.
 - 5 TB traffic size.
@@ -41,9 +42,16 @@ We are going to add more features, such as servers variety, different plans and 
 #API's
 bot = telebot.TeleBot('5826517455:AAEga_2bdw5IcwKpyPunegxYCQWulH5o9uM') #telebot API
 API_TOKEN = 'NOSsbf93NQYRCQsb1kr3CoSLQTXRbvVraoNSJDPjIkdZYdZSZzRUOaTt8Zi4q4BS' #hetzner_API
-
+#VARIABLES
 button_home = types.InlineKeyboardButton(text='Home', callback_data='home')
 alphabet = string.ascii_letters + string.digits
+
+def expiration_checker(cursor, chat_id):
+    order_date = dbu.fetch_one_for_query(cursor, 'SELECT order_date FROM users_info WHERE chat_id = %s', chat_id)
+    expiration_date = (order_date + relativedelta(months=1)).strftime('%Y-%m-%d')
+    
+    
+
 
 def invoice_json(invoice_id):
     conn = http.client.HTTPSConnection("api.commerce.coinbase.com")
@@ -59,15 +67,9 @@ def invoice_json(invoice_id):
     data = res.read().decode("utf-8")
     json_data = json.loads(data)
     return json_data
-       
-def settle_user(chat_id):
-    cursor = dbu.connection.cursor()
-    server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_IP FROM servers WHERE server_location = (SELECT server_location FROM users_info WHERE chat_id = %s) AND user_amount < 4;', chat_id)
-    print (server_ip)
-    user_amount = dbu.fetch_one_for_query(cursor, 'SELECT user_amount FROM servers WHERE server_ip = %s', server_ip)
-    print(user_amount)
-    if user_amount == 3:
-        SSH_KEY = 'Main'                                                        #Create server for next user
+
+def create_server_hetzner(cursor, chat_id):
+        SSH_KEY = 'Main'
         SERVER_LOCATION = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info WHERE chat_id = %s', chat_id)
         SERVER_NAME = f'{SERVER_LOCATION}-{int(time.time())}'
         SERVER_TYPE = 'cx11'
@@ -85,16 +87,30 @@ def settle_user(chat_id):
         new_server_ip = server.public_net.ipv4.ip
         new_server_id = server.id
         dbu.update(cursor, 'INSERT INTO servers (server_location, server_IP, user_amount, server_name, server_id) VALUES (%s, %s, %s, %s, %s)', SERVER_LOCATION, new_server_ip, 0, SERVER_NAME, new_server_id)
-        ssh_client =  paramiko.SSHClient()
-        ssh_client.set_missing_host_key_policy(paramiko.WarningPolicy())
-        ssh_client.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
-        ssh_client.connect(hostname=new_server_ip, username='root')
-        stdin, stdout, stderr = ssh_client.exec_command('ls -a')
-        print(stdout.read().decode('utf-8'))
-        ssh_client.close()
+        while True:
+            server = client.servers.get_by_id(server.id)
+            if server.status == 'running':
+                break
+            time.sleep(5)
+        time.sleep(15)
+        result = subprocess.run(['ssh-keyscan', '-t', 'rsa', f'{new_server_ip}'], stdout=subprocess.PIPE)
+        server_key = result.stdout.decode('utf-8')
+        with open('/home/grigoriy/.ssh/known_hosts', 'a') as f:
+            f.write(server_key)
 
-    client = docker.DockerClient(base_url=f'ssh://root@{server_ip}')
-    client.images.pull('shadowsocks/shadowsocks-libev')
+def settle_user(chat_id):
+    cursor = dbu.connection.cursor()
+    server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_IP FROM servers WHERE server_location = (SELECT server_location FROM users_info WHERE chat_id = %s) AND user_amount < 4 ORDER BY user_amount DESC LIMIT 1', chat_id)
+    print (server_ip)
+    user_amount = dbu.fetch_one_for_query(cursor, 'SELECT user_amount FROM servers WHERE server_ip = %s', server_ip)
+    print(user_amount)
+    if user_amount == 3:
+        thread = threading.Thread(target=create_server_hetzner, args=(cursor, chat_id))
+        thread.start()
+    client = docker.DockerClient(
+        base_url=f'ssh://root@{server_ip}',
+        use_ssh_client = True
+        )
     method = 'chacha20-ietf-poly1305'
     password = ''.join(secrets.choice(alphabet) for i in range(10))
     server_port = str(random.randint(1000, 10000))
@@ -219,13 +235,12 @@ def handle_callback_query(call):
         json_data = json.loads(data)
         invoice_status = json_data['data']['status']
         print(invoice_status)
-        if True:#invoice_status == 'PAID':
+        if True: #invoice_status == 'PAID':
             server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info WHERE chat_id = %s', chat_id)   
             if server_ip == None:
                 settle_user(chat_id)
             username = call.from_user.username
             order_date = dbu.fetch_one_for_query(cursor, 'SELECT order_date FROM users_info WHERE chat_id = %s', chat_id)
-            #order_date = datetime.strptime(x, '%Y-%m-%d')
             ordered_untill = (order_date + relativedelta(months=1)).strftime('%d-%m-%Y')
             users_link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info WHERE chat_id = %s', chat_id)
             markup = types.InlineKeyboardMarkup(row_width=2)
@@ -233,7 +248,7 @@ def handle_callback_query(call):
             button_addinional_server = types.InlineKeyboardButton(text='Get additional server', callback_data='additional_server')
             button_instructions = types.InlineKeyboardButton(text='Instructions', callback_data='instructions')
             markup.add(button_change_location, button_addinional_server, button_instructions, button_home)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f'User <b>{username}</b>\nTraffic left:\nPaid until: <b>{ordered_untill}</b>\nLink: <pre>{users_link}</pre>', parse_mode='html', reply_markup=markup)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=f'User <b>{username}</b>\nTraffic left:\nPaid until: <b>{ordered_untill}</b>\nLink: <pre>{users_link}</pre> (tap to copy)', parse_mode='html', reply_markup=markup)
         elif invoice_status == None:
             pass
         else:
