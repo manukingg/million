@@ -97,6 +97,7 @@ def send_welcome(message):
     if result is None:
         dbu.update(cursor, "INSERT INTO users_info_ru (chat_id, user_nickname) VALUES (%s, %s)", chat_id, username)
         dbu.update(cursor, "INSERT INTO analytics (chat_id, source) VALUES (%s, %s)", chat_id, source)
+        connection.commit()
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(button_purchase, button_manage, button_instructions, button_about)
     bot.send_message(message.chat.id, text['home'], parse_mode='html', reply_markup=markup)
