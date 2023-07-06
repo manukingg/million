@@ -88,152 +88,158 @@ def send_welcome(message):
     source = message.text.split(' ')[1] if len(message.text.split(' ')) > 1 else 'dW5rbm93bg=='
     source = base64.b64decode(source).decode('utf-8')
     connection = dbu.connection_pool.get_connection()
-    cursor = connection.cursor()
-    query = """SELECT chat_id FROM users_info_ru WHERE chat_id = (%s)"""
-    chat_id = message.chat.id
-    username = message.from_user.username
-    cursor.execute(query, (chat_id,))
-    result = cursor.fetchone()
-    if result is None:
-        dbu.update(cursor, "INSERT INTO users_info_ru (chat_id, user_nickname) VALUES (%s, %s)", chat_id, username)
-        dbu.update(cursor, "INSERT INTO analytics (chat_id, source) VALUES (%s, %s)", chat_id, source)
-        connection.commit()
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(button_purchase, button_manage, button_instructions, button_about)
-    bot.send_message(message.chat.id, text['home'], parse_mode='html', reply_markup=markup)
-    mp.people_set(str(message.chat.id), {
-        '$First_name': f'{message.from_user.first_name}',
-        '$Last_name': f'{message.from_user.last_name}',
-        '$Nickname': f'{username}',
-        '$Source': f'{source}'        
-    }, meta = {'$ignore_time': True, '$ip': 0})
-    mp.track(str(message.chat.id), 'User started bot', {'Source': f'{source}'})
+    try:
+        cursor = connection.cursor()
+        query = """SELECT chat_id FROM users_info_ru WHERE chat_id = (%s)"""
+        chat_id = message.chat.id
+        username = message.from_user.username
+        cursor.execute(query, (chat_id,))
+        result = cursor.fetchone()
+        if result is None:
+            dbu.update(cursor, "INSERT INTO users_info_ru (chat_id, user_nickname) VALUES (%s, %s)", chat_id, username)
+            dbu.update(cursor, "INSERT INTO analytics (chat_id, source) VALUES (%s, %s)", chat_id, source)
+            connection.commit()
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(button_purchase, button_manage, button_instructions, button_about)
+        bot.send_message(message.chat.id, text['home'], parse_mode='html', reply_markup=markup)
+        mp.people_set(str(message.chat.id), {
+            '$First_name': f'{message.from_user.first_name}',
+            '$Last_name': f'{message.from_user.last_name}',
+            '$Nickname': f'{username}',
+            '$Source': f'{source}'        
+        }, meta = {'$ignore_time': True, '$ip': 0})
+        mp.track(str(message.chat.id), 'User started bot', {'Source': f'{source}'})
+    finally:
+        connection.close()
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback_query(call):
     connection = dbu.connection_pool.get_connection()
-    cursor = connection.cursor()
+    try:
+        cursor = connection.cursor()
 
-    if call.data == 'home':
-        chat_id = str(call.message.chat.id)
-        
-        server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        if server_ip == None:
-            markup.add(button_purchase, button_manage, button_instructions, button_about)
-        else:
-            markup.add(button_prolongate, button_manage, button_instructions, button_about)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                              text=text['home'], reply_markup=markup)
-        mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
-
-
-# Purchase logics --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-    if call.data == 'purchase':
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(button_monthly, button_daily, button_home)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                              text=text['purchase'], reply_markup=markup)
-        mp.track(str(call.message.chat.id), 'User entered Purchase category', {'Button name': 'Purchase'})
-
-    if call.data == 'monthly_subscription' or call.data == 'daily_subscription':
-        chat_id = str(call.message.chat.id)
-        days = {
-            "monthly_subscription": 31,
-            "daily_subscription": 1
-        }
-        amount = {
-            "monthly_subscription": 4.99,
-            "daily_subscription": 0.99
-        }
-        dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(button_crypto, button_home)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                              text=text['method'], reply_markup=markup)
-        mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
-
-    if call.data == 'crypto_payment':
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(button_Nuremberg, button_Falkenstein, button_Helsinki,button_Moscow, button_home)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                              text=text['location'], reply_markup=markup)
-        mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
-
-
-    if call.data == 'nbg1' or call.data == 'hel1' or call.data == 'fsn1' or call.data == 'msk1':
-        chat_id = str(call.message.chat.id)
-        dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s',
-                   call.data, call.message.chat.id)
-        amount = str(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
-        duration = str(dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id))
-        hosted_url = create_invoice(cursor, call.message.chat.id, duration, amount)
-        markup = types.InlineKeyboardMarkup()
-        markup.add(button_home)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                              text=text['invoice'].format(hosted_url=hosted_url), parse_mode='html', reply_markup=markup)
-        mp.track(str(call.message.chat.id), f'User chose server {call.data}', {'Button name': f'{call.data}'})
-
-    # Manage my account logics
-
-    if call.data == 'manage':
-        chat_id = str(call.message.chat.id)
-        expiration_date, server_ip = dbu.fetch_row_for_query(
-            cursor, 'SELECT expiration_date, server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
-        now = datetime.datetime.now()
-        if expiration_date is not None and expiration_date > now:
-            if server_ip is None:
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(button_instructions, button_home)
-                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['server_creating'], parse_mode='html', reply_markup=markup)
-                mp.track(str(call.message.chat.id), 'User entered Profile section while server was creating', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
+        if call.data == 'home':
+            chat_id = str(call.message.chat.id)
+            
+            server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            if server_ip == None:
+                markup.add(button_purchase, button_manage, button_instructions, button_about)
             else:
-                username = call.from_user.username
-                shadowsocks_link = dbu.fetch_one_for_query(
-                    cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(button_instructions, button_home)
-                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['profile'].format(
-                    username=username, ordered_untill=expiration_date, users_link=shadowsocks_link), parse_mode='html', reply_markup=markup)
-                mp.track(str(call.message.chat.id), 'User entered Profile section while active subscription', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
-        else:
-            invoice_count = dbu.fetch_one_for_query(
-                cursor, 'SELECT COUNT(*) from invoices where chat_id = %s and status = %s', chat_id, 'check')
-            if invoice_count > 0:
-                hosted_url = dbu.fetch_one_for_query(
-                    cursor, 'SELECT hosted_url from invoices where chat_id = %s and status = %s order by created_at desc limit 1', chat_id, 'check')
-                markup = types.InlineKeyboardMarkup()
-                button_invoice = types.InlineKeyboardButton(text='Ссылка на счёт', url=str(hosted_url))
-                markup.add(button_invoice, button_home)
-                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                      text=text['invoice_unpayed'], parse_mode='html', reply_markup=markup)
-                mp.track(str(call.message.chat.id), 'User entered Profile section with unpayed invoice', {'Button name': 'Profile'})
+                markup.add(button_prolongate, button_manage, button_instructions, button_about)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['home'], reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
+
+
+    # Purchase logics --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+        if call.data == 'purchase':
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_monthly, button_daily, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['purchase'], reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User entered Purchase category', {'Button name': 'Purchase'})
+
+        if call.data == 'monthly_subscription' or call.data == 'daily_subscription':
+            chat_id = str(call.message.chat.id)
+            days = {
+                "monthly_subscription": 31,
+                "daily_subscription": 1
+            }
+            amount = {
+                "monthly_subscription": 4.99,
+                "daily_subscription": 0.99
+            }
+            dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(button_crypto, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['method'], reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
+
+        if call.data == 'crypto_payment':
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_Nuremberg, button_Falkenstein, button_Helsinki,button_Moscow, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['location'], reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
+
+
+        if call.data == 'nbg1' or call.data == 'hel1' or call.data == 'fsn1' or call.data == 'msk1':
+            chat_id = str(call.message.chat.id)
+            dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s',
+                    call.data, call.message.chat.id)
+            amount = str(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
+            duration = str(dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id))
+            hosted_url = create_invoice(cursor, call.message.chat.id, duration, amount)
+            markup = types.InlineKeyboardMarkup()
+            markup.add(button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['invoice'].format(hosted_url=hosted_url), parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose server {call.data}', {'Button name': f'{call.data}'})
+
+        # Manage my account logics
+
+        if call.data == 'manage':
+            chat_id = str(call.message.chat.id)
+            expiration_date, server_ip = dbu.fetch_row_for_query(
+                cursor, 'SELECT expiration_date, server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+            now = datetime.datetime.now()
+            if expiration_date is not None and expiration_date > now:
+                if server_ip is None:
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    markup.add(button_instructions, button_home)
+                    bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['server_creating'], parse_mode='html', reply_markup=markup)
+                    mp.track(str(call.message.chat.id), 'User entered Profile section while server was creating', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
+                else:
+                    username = call.from_user.username
+                    shadowsocks_link = dbu.fetch_one_for_query(
+                        cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    markup.add(button_instructions, button_home)
+                    bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['profile'].format(
+                        username=username, ordered_untill=expiration_date, users_link=shadowsocks_link), parse_mode='html', reply_markup=markup)
+                    mp.track(str(call.message.chat.id), 'User entered Profile section while active subscription', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
             else:
-                markup = types.InlineKeyboardMarkup()
-                markup.add(button_home)
-                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                      text=text['invoice_uncreated'], parse_mode='html', reply_markup=markup)
-                mp.track(str(call.message.chat.id), 'User entered Profile section before creating invoice', {'Button name': 'Profile'})
+                invoice_count = dbu.fetch_one_for_query(
+                    cursor, 'SELECT COUNT(*) from invoices where chat_id = %s and status = %s', chat_id, 'check')
+                if invoice_count > 0:
+                    hosted_url = dbu.fetch_one_for_query(
+                        cursor, 'SELECT hosted_url from invoices where chat_id = %s and status = %s order by created_at desc limit 1', chat_id, 'check')
+                    markup = types.InlineKeyboardMarkup()
+                    button_invoice = types.InlineKeyboardButton(text='Ссылка на счёт', url=str(hosted_url))
+                    markup.add(button_invoice, button_home)
+                    bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                        text=text['invoice_unpayed'], parse_mode='html', reply_markup=markup)
+                    mp.track(str(call.message.chat.id), 'User entered Profile section with unpayed invoice', {'Button name': 'Profile'})
+                else:
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(button_home)
+                    bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                        text=text['invoice_uncreated'], parse_mode='html', reply_markup=markup)
+                    mp.track(str(call.message.chat.id), 'User entered Profile section before creating invoice', {'Button name': 'Profile'})
 
-    if call.data == 'instructions':
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_home)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                              text=text['instructions'], parse_mode='html', reply_markup=markup)
-        mp.track(str(call.message.chat.id), 'User entered instructions section', {'Button name': 'Instructions'})
+        if call.data == 'instructions':
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['instructions'], parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User entered instructions section', {'Button name': 'Instructions'})
 
-    if call.data == 'prolongate':
-        pass
+        if call.data == 'prolongate':
+            pass
 
-    if call.data == 'about':
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(button_instructions, button_home)
-        bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                  text=text['about'], parse_mode='html', reply_markup=markup)
-        mp.track(str(call.message.chat.id), 'User entered About section', {'Button name': 'About'})
+        if call.data == 'about':
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(button_instructions, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                    text=text['about'], parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User entered About section', {'Button name': 'About'})
 
-    connection.commit()
+        connection.commit()
+    finally:
+        connection.close()
 # Second level logics----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 bot.infinity_polling()

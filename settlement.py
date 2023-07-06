@@ -236,12 +236,15 @@ def settle_expired_users(cursor):
 def main():
     while True:
         connection = dbu.connection_pool.get_connection()
-        cursor = connection.cursor()
-        settle_open_invoices(cursor)
-        settle_active_users_without_server(cursor)
-        settle_expired_users(cursor)
-        connection.commit()
-        time.sleep(10)
+        try:
+            cursor = connection.cursor()
+            settle_open_invoices(cursor)
+            settle_active_users_without_server(cursor)
+            settle_expired_users(cursor)
+            connection.commit()
+            time.sleep(10)
+        finally:
+            connection.close()
 
 
 if __name__ == '__main__':
