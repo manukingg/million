@@ -19,6 +19,9 @@ from mixpanel import Mixpanel
 import hashlib
 import pathlib
 import paramiko
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 
 HETZNER_API_TOKEN = 'NOSsbf93NQYRCQsb1kr3CoSLQTXRbvVraoNSJDPjIkdZYdZSZzRUOaTt8Zi4q4BS'
@@ -59,11 +62,12 @@ def create_server_reg(cursor):
         'Authorization': f'Bearer {REG_API_TOKEN}',
         'Content-Type': 'application/json'
     }
+    logging.info(f"Creating a reg server.")
     conn.request("POST", "/v1/reglets", payload, headers)
     response = conn.getresponse()
     data = response.read().decode("utf-8")
     json_data = json.loads(data)
-    print(json_data)
+    logging.info(f"Response from reg for server creation request: {json_data}")
     server_id = json_data['reglet']['id']
     time.sleep(10)
     while True:
@@ -71,9 +75,9 @@ def create_server_reg(cursor):
         response = conn.getresponse()
         data = response.read().decode("utf-8")
         json_data = json.loads(data)
-        print(json_data)
+        logging.info(f"Response from reg for server status update request: {json_data}")
         server_status = json_data['reglet']['status']
-        print(server_status)
+        logging.info(f"Server status: {server_status}")
         if server_status == 'active':
             break
         time.sleep(5)
@@ -99,6 +103,7 @@ def create_server_hetzner(cursor, chat_id):
     SERVER_IMAGE = 'docker-ce'
     client = Client(token=HETZNER_API_TOKEN)
     ssh_key = client.ssh_keys.get_by_name(name=SSH_KEY)
+    logging.info(f"Creating a hetzner server {SERVER_NAME} at {SERVER_LOCATION}.")
     response = client.servers.create(
         name=SERVER_NAME,
         server_type=ServerType(name=SERVER_TYPE),
@@ -108,16 +113,19 @@ def create_server_hetzner(cursor, chat_id):
     )
     server = response.server
     new_server_ip = server.public_net.ipv4.ip
+    logging.info(f"Hetzner server {SERVER_NAME} created with ip {new_server_ip}, awaiting running.")
     new_server_id = server.id
     dbu.update(cursor, 'INSERT INTO servers (server_location, server_IP, user_amount, server_name, server_id) VALUES (%s, %s, %s, %s, %s)',
                SERVER_LOCATION, new_server_ip, 0, SERVER_NAME, new_server_id)
     cursor._connection.commit()
+    logging.info(f"Hetzner server {SERVER_NAME} added to DB.")
     while True:
         server = client.servers.get_by_id(server.id)
         if server.status == 'running':
             break
         time.sleep(5)
     time.sleep(15)
+    logging.info(f"Hetzner server {SERVER_NAME} running.")
     result = subprocess.run(['ssh-keyscan', '-t', 'rsa', f'{new_server_ip}'], stdout=subprocess.PIPE)
     server_key = result.stdout.decode('utf-8')
     with open(f'{str(pathlib.Path.home())}/.ssh/known_hosts', 'a') as f:
@@ -125,6 +133,7 @@ def create_server_hetzner(cursor, chat_id):
     return new_server_ip
 
 def ensure_ssh_connection(server_ip):
+    logging.info(f"Checking ssh connection to {server_ip} running.")
     pathlib.Path(f'{str(pathlib.Path.home())}/.ssh/known_hosts').touch()
     paramiko_client = paramiko.client.SSHClient()
     paramiko_client.load_host_keys(f'{str(pathlib.Path.home())}/.ssh/known_hosts')
@@ -153,6 +162,7 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
             else:
                 create_server_hetzner(cursor, chat_id)
     ensure_ssh_connection(server_ip)
+    logging.info(f"Creating docker client connection to {server_ip}")
     client = docker.DockerClient(
         base_url=f'ssh://root@{server_ip}',
         use_ssh_client=True
@@ -160,6 +170,7 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
     method = 'chacha20-ietf-poly1305'
     password = ''.join(secrets.choice(ALPHABET) for i in range(10))
     server_port = str(random.randint(1000, 10000))
+    logging.info(f"Running docker container with {method} {server_ip} {server_port}")
     container = client.containers.run(
         'shadowsocks/shadowsocks-libev',
         environment={'PASSWORD': password, 'METHOD': method},
@@ -173,6 +184,7 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
     dbu.update(cursor, 'UPDATE servers SET user_amount = %s WHERE server_IP = %s', user_amount, server_ip)
     dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
                server_ip, server_port, password, encoded_uri, container_id, chat_id)
+    logging.info(f"Updated db for chat {chat_id} with {server_ip} {server_port} with uri {encoded_uri}")
 
 def get_invoice_status(conn, invoice_id):
     try:
@@ -194,7 +206,7 @@ def get_invoice_status(conn, invoice_id):
         invoice_status = json_data['result']['payment_status']
         return invoice_status
     except Exception as e:
-        print(f'Got error while getting invoice {invoice_id} status: {e}')
+        logging.error(f'Got error while getting invoice {invoice_id} status: {e}')
         return None
 
 def settle_open_invoices(cursor):
@@ -241,9 +253,9 @@ def main():
             settle_open_invoices(cursor)
             settle_active_users_without_server(cursor)
             settle_expired_users(cursor)
-            connection.commit()
             time.sleep(10)
         finally:
+            connection.commit()
             connection.close()
 
 
