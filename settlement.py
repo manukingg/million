@@ -106,10 +106,6 @@ def create_server_reg(cursor):
     dbu.update(cursor, 'INSERT INTO servers (server_location, server_IP, user_amount, server_name, server_id) VALUES (%s, %s, %s, %s, %s)',
                server_location, server_ip, 0, server_name, server_id)
     cursor._connection.commit()
-    result = subprocess.run(['ssh-keyscan', '-t', 'rsa', f'{server_ip}'], stdout=subprocess.PIPE)
-    server_key = result.stdout.decode('utf-8')
-    with open(f'{str(pathlib.Path.home())}/.ssh/known_hosts', 'a') as f:
-        f.write(server_key)
     return server_ip
 
 def create_server_hetzner(cursor, chat_id):
