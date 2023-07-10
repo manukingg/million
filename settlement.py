@@ -20,6 +20,24 @@ import hashlib
 import pathlib
 import paramiko
 import logging
+import socks
+from docker.transport import SSHHTTPAdapter
+
+def SSHHTTPAdapter_patched_connect(self):
+        if self.ssh_client:
+            logging.info(f"Trying to connect to {self.ssh_params['hostname']} through socks5 inside docker client patch.")
+            sock = socks.socksocket()
+            sock.set_proxy(
+                proxy_type=socks.SOCKS5,
+                addr="0.0.0.0",
+                port=1070,
+            )
+            sock.connect((self.ssh_params['hostname'], 22))
+            logging.info(f"Successfully connected to {self.ssh_params['hostname']} through socks5 inside docker client patch.")
+            self.ssh_params['sock'] = sock
+            #self.ssh_params['key_filename'] = '/home/shocoladka/.ssh/humanvpn_id_rsa'
+            self.ssh_client.connect(**self.ssh_params)
+SSHHTTPAdapter._connect = SSHHTTPAdapter_patched_connect
 
 logging.basicConfig(level=logging.INFO)
 
@@ -126,20 +144,28 @@ def create_server_hetzner(cursor, chat_id):
         time.sleep(5)
     time.sleep(15)
     logging.info(f"Hetzner server {SERVER_NAME} running.")
-    result = subprocess.run(['ssh-keyscan', '-t', 'rsa', f'{new_server_ip}'], stdout=subprocess.PIPE)
-    server_key = result.stdout.decode('utf-8')
-    with open(f'{str(pathlib.Path.home())}/.ssh/known_hosts', 'a') as f:
-        f.write(server_key)
     return new_server_ip
 
 def ensure_ssh_connection(server_ip):
     logging.info(f"Checking ssh connection to {server_ip} running.")
     pathlib.Path(f'{str(pathlib.Path.home())}/.ssh/known_hosts').touch()
+
+
+    logging.info(f"Establishing sock connection to {server_ip}.")
+    sock = socks.socksocket()
+    sock.set_proxy(
+        proxy_type=socks.SOCKS5,
+        addr="0.0.0.0",
+        port=1070,
+    )
+    sock.connect((server_ip, 22))
+    logging.info(f"Successfully Established sock connection to {server_ip}.")
     paramiko_client = paramiko.client.SSHClient()
     paramiko_client.load_host_keys(f'{str(pathlib.Path.home())}/.ssh/known_hosts')
     paramiko_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    paramiko_client.connect(server_ip, username='root')
+    paramiko_client.connect(server_ip, username='root', sock=sock)#, key_filename='/home/shocoladka/.ssh/humanvpn_id_rsa')
     paramiko_client.save_host_keys(f'{str(pathlib.Path.home())}/.ssh/known_hosts')
+    logging.info(f"Ssh connection to {server_ip} successfull.")
    
 
 def create_shadowsocks_server_for_user(cursor, chat_id):
@@ -165,7 +191,6 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
     logging.info(f"Creating docker client connection to {server_ip}")
     client = docker.DockerClient(
         base_url=f'ssh://root@{server_ip}',
-        use_ssh_client=True
     )
     method = 'chacha20-ietf-poly1305'
     password = ''.join(secrets.choice(ALPHABET) for i in range(10))
@@ -253,10 +278,10 @@ def main():
             settle_open_invoices(cursor)
             settle_active_users_without_server(cursor)
             settle_expired_users(cursor)
-            time.sleep(10)
         finally:
             connection.commit()
             connection.close()
+            time.sleep(10)
 
 
 if __name__ == '__main__':
