@@ -55,7 +55,7 @@ def create_server_reg(cursor):
     conn = http.client.HTTPSConnection("api.cloudvps.reg.ru")
     payload = json.dumps({
         'size': 'base-1',
-        'image': 'ubuntu-20-04-amd64-docker-19',
+        'image': 3071567,
         'ssh_keys':['cf:87:9a:2e:f1:07:9d:48:a2:fc:de:1c:78:03:50:a8']
     })
     headers = {
