@@ -18,6 +18,7 @@ with open('texts.json', 'r') as json_file:
 
 # API's
 bot = telebot.TeleBot('6099520315:AAHx6SjHmf5o-nq1tsZRrsfKw8IqCe4Fgr8')  # telebot API
+payment_token = '381764678:TEST:63821'
 DB_TABLE_NAME = 'users_info_ru'
 mp = Mixpanel('ba4f4c87c35eabfbb7820e21724aaa26')
 PAYMENT_KEY = 'y4FWxjLLtiR16WEsiHydXAyQ6PQioKKDwW8ECjMgQa7tj7DulwWfSoyh8gbJmdXtRaCkS6k7QqE8fX1BxJOtUJ4MRoNkPQAWQUKQDCrOmVQwuCBpY5pKvEJO3P6wSomL'
@@ -40,6 +41,7 @@ button_Helsinki = types.InlineKeyboardButton(text['helsinki'], callback_data='he
 button_Moscow = types.InlineKeyboardButton(text['moscow'], callback_data='msk1')
 button_Falkenstein = types.InlineKeyboardButton(text['falkenstein'], callback_data='fsn1')
 button_crypto = types.InlineKeyboardButton(text['button_crypto'], callback_data='crypto_payment')
+button_card =  types.InlineKeyboardButton(text['button_card'], callback_data='card_payment')
 button_ios = types.InlineKeyboardButton(text='iOS', url='https://itunes.apple.com/us/app/outline-app/id1356177741')
 button_android = types.InlineKeyboardButton(
     text='Android', url='https://play.google.com/store/apps/details?id=org.outline.android.client')
@@ -153,23 +155,24 @@ def handle_callback_query(call):
             }
             dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
             markup = types.InlineKeyboardMarkup(row_width=2)
-            markup.add(button_crypto, button_home)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['method'], reply_markup=markup)
-            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
-
-        if call.data == 'crypto_payment':
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_Nuremberg, button_Falkenstein, button_Helsinki,button_Moscow, button_home)
+            markup.add(button_Nuremberg, button_Falkenstein, button_Helsinki, button_Moscow, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['location'], reply_markup=markup)
             mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
 
-
         if call.data == 'nbg1' or call.data == 'hel1' or call.data == 'fsn1' or call.data == 'msk1':
             chat_id = str(call.message.chat.id)
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_card, button_crypto, button_home)
             dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s',
                     call.data, call.message.chat.id)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                    text=text['method'], reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
+                
+        if call.data == 'crypto_payment':
+            dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = %s WHERE chat_id = %s',
+                       call.data, call.message.chat.id)
             amount = str(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
             duration = str(dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id))
             hosted_url = create_invoice(cursor, call.message.chat.id, duration, amount)
@@ -179,6 +182,23 @@ def handle_callback_query(call):
                                 text=text['invoice'].format(hosted_url=hosted_url), parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), f'User chose server {call.data}', {'Button name': f'{call.data}'})
 
+        if call.data =='card_payment':
+            dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = card_payment WHERE chat_id = %s', chat_id)
+            chat_id = str(call.message.chat.id)
+            bot.send_invoice(
+                chat_id=chat_id,
+                title='Оплата подписки HumanVPN',
+                description='Поддерживаем оплату Российскими картами МИР',
+                invoice_payload='HUMAN VPN',
+                provider_token=payment_token,
+                currency='rub',
+                prices=[
+                    {
+                        "label": 'Human VPN 31 день',
+                        "amount": 40000,
+                    }
+                ]
+            )
         # Manage my account logics
 
         if call.data == 'manage':
