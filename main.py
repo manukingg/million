@@ -2,6 +2,7 @@ import telebot
 from telebot import types
 import json
 from datetime import datetime, timedelta
+from telebot.types import LabeledPrice
 import datetime
 import base64
 from dateutil.relativedelta import relativedelta
@@ -150,8 +151,8 @@ def handle_callback_query(call):
                 "daily_subscription": 1
             }
             amount = {
-                "monthly_subscription": 4.99,
-                "daily_subscription": 0.99
+                "monthly_subscription": 399,
+                "daily_subscription": 99
             }
             dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
             markup = types.InlineKeyboardMarkup(row_width=2)
@@ -171,6 +172,7 @@ def handle_callback_query(call):
             mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
                 
         if call.data == 'crypto_payment':
+            chat_id = str(call.message.chat.id)
             dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = %s WHERE chat_id = %s',
                        call.data, call.message.chat.id)
             amount = str(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
@@ -183,21 +185,18 @@ def handle_callback_query(call):
             mp.track(str(call.message.chat.id), f'User chose server {call.data}', {'Button name': f'{call.data}'})
 
         if call.data =='card_payment':
-            dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = card_payment WHERE chat_id = %s', chat_id)
             chat_id = str(call.message.chat.id)
+            dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = %s WHERE chat_id = %s', call.data, chat_id) 
+            amount = int(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
+            duration = str(dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id))
             bot.send_invoice(
                 chat_id=chat_id,
-                title='Оплата подписки HumanVPN',
+                title=f'Оплата подписки HumanVPN {duration} день',
                 description='Поддерживаем оплату Российскими картами МИР',
                 invoice_payload='HUMAN VPN',
                 provider_token=payment_token,
                 currency='rub',
-                prices=[
-                    {
-                        "label": 'Human VPN 31 день',
-                        "amount": 40000,
-                    }
-                ]
+                prices=[LabeledPrice(label=f'Human VPN subscription', amount = amount * 100)]
             )
         # Manage my account logics
 
