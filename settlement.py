@@ -41,7 +41,7 @@ SSHHTTPAdapter._connect = SSHHTTPAdapter_patched_connect
 
 logging.basicConfig(level=logging.INFO)
 
-
+TRIAL_SERVER_IP = '128.140.34.117'
 HETZNER_API_TOKEN = 'NOSsbf93NQYRCQsb1kr3CoSLQTXRbvVraoNSJDPjIkdZYdZSZzRUOaTt8Zi4q4BS'
 REG_API_TOKEN = 'cf78246f88c2d68091efc8daaf101764b72513fe4e01b9fbe7906c50b9fc50824211eb24eca67592d80282664ec6a08f'
 mp = Mixpanel('ba4f4c87c35eabfbb7820e21724aaa26')
@@ -113,7 +113,10 @@ def create_server_hetzner(cursor, chat_id):
     SERVER_LOCATION = dbu.fetch_one_for_query(
         cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
     SERVER_NAME = f'{SERVER_LOCATION}-{int(time.time())}'
-    SERVER_TYPE = 'cx11'
+    if SERVER_LOCATION == 'ash' or SERVER_LOCATION == 'hil':
+        SERVER_TYPE = 'cpx11'
+    else:
+        SERVER_TYPE = 'cx11'
     SERVER_IMAGE = 'docker-ce'
     client = Client(token=HETZNER_API_TOKEN)
     ssh_key = client.ssh_keys.get_by_name(name=SSH_KEY)
@@ -145,8 +148,6 @@ def create_server_hetzner(cursor, chat_id):
 def ensure_ssh_connection(server_ip):
     logging.info(f"Checking ssh connection to {server_ip} running.")
     pathlib.Path(f'{str(pathlib.Path.home())}/.ssh/known_hosts').touch()
-
-
     logging.info(f"Establishing sock connection to {server_ip}.")
     sock = socks.socksocket()
     sock.set_proxy(
@@ -252,6 +253,33 @@ def settle_active_users_without_server(cursor):
     for (chat_id,) in entries:
         create_shadowsocks_server_for_user(cursor, chat_id)
 
+def settle_users_on_trial(cursor):
+    now = datetime.datetime.now()
+    entries = dbu.fetch_all_for_query(cursor, 'SELECT chat_id FROM users_info_ru WHERE expiration_date > %s AND server_ip = %s', now, TRIAL_SERVER_IP)
+    for (chat_id,) in entries:
+        ensure_ssh_connection(TRIAL_SERVER_IP)
+        logging.info(f"Creating docker client connection to {TRIAL_SERVER_IP}")
+        client = docker.DockerClient(
+            base_url=f'ssh://root@{TRIAL_SERVER_IP}',
+        )
+        method = 'chacha20-ietf-poly1305'
+        password = ''.join(secrets.choice(ALPHABET) for i in range(10))
+        server_port = str(random.randint(1000, 10000))
+        logging.info(f"Running docker container with {method} {TRIAL_SERVER_IP} {server_port}")
+        container = client.containers.run(
+            'shadowsocks/shadowsocks-libev',
+            environment={'PASSWORD': password, 'METHOD': method},
+            ports={8388: ('0.0.0.0', server_port), '8388/udp': ('0.0.0.0', server_port)},
+            detach=True,
+            restart_policy={'Name': 'always'})
+        container_id = container.id
+        uri = f'{method}:{password}@{TRIAL_SERVER_IP}:{server_port}'
+        encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
+        dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
+                TRIAL_SERVER_IP, server_port, password, encoded_uri, container_id, chat_id)
+        logging.info(f"Updated db for chat {chat_id} with {TRIAL_SERVER_IP} {server_port} with uri {encoded_uri}")
+
+
 def settle_expired_users(cursor):
     now = datetime.datetime.now()
     entries = dbu.fetch_all_for_query(cursor, 'SELECT server_ip, container_id, chat_id FROM users_info_ru WHERE expiration_date < %s AND server_ip IS NOT NULL', now)
@@ -273,6 +301,7 @@ def main():
             cursor = connection.cursor()
             settle_open_invoices(cursor)
             settle_active_users_without_server(cursor)
+            settle_users_on_trial(cursor)
             settle_expired_users(cursor)
         finally:
             connection.commit()
