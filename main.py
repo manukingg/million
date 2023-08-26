@@ -177,7 +177,7 @@ def handle_callback_query(call):
             markup.add(button_home)
             chat_id = str(call.message.chat.id)
             trial_expiration_date = datetime.datetime.now() + datetime.timedelta(hours=24)
-            dbu.update(cursor, 'UPDATE users_info_ru SET used_trial = 1, expiration_date = %s, server_ip = %s WHERE chat_id = %s', trial_expiration_date, TRIAL_SERVER_IP, chat_id)
+            dbu.update(cursor, 'UPDATE users_info_ru SET expiration_date = %s, server_ip = %s, used_trial = 1 WHERE chat_id = %s', trial_expiration_date, TRIAL_SERVER_IP, chat_id)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['continue'], parse_mode='html', reply_markup=markup)
 

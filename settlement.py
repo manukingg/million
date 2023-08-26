@@ -255,7 +255,7 @@ def settle_active_users_without_server(cursor):
 
 def settle_users_on_trial(cursor):
     now = datetime.datetime.now()
-    entries = dbu.fetch_all_for_query(cursor, 'SELECT chat_id FROM users_info_ru WHERE expiration_date > %s AND server_ip = %s', now, TRIAL_SERVER_IP)
+    entries = dbu.fetch_all_for_query(cursor, 'SELECT chat_id FROM users_info_ru WHERE expiration_date > %s AND server_ip = %s AND container_id IS NULL', now, TRIAL_SERVER_IP)
     for (chat_id,) in entries:
         ensure_ssh_connection(TRIAL_SERVER_IP)
         logging.info(f"Creating docker client connection to {TRIAL_SERVER_IP}")
