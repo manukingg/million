@@ -50,6 +50,57 @@ ALPHABET = string.ascii_letters + string.digits
 PAYMENT_KEY = 'y4FWxjLLtiR16WEsiHydXAyQ6PQioKKDwW8ECjMgQa7tj7DulwWfSoyh8gbJmdXtRaCkS6k7QqE8fX1BxJOtUJ4MRoNkPQAWQUKQDCrOmVQwuCBpY5pKvEJO3P6wSomL'
 MERCHANT_UUID = '3b89f29b-2459-4bbd-bace-2f2e14df7aed'
 
+def duplicate_server(cursor, server_ip):
+    server_id = dbu.fetch_one_for_query(cursor, 'SELECT server_id FROM servers WHERE server_IP = %s', server_ip)
+    client = Client(token=HETZNER_API_TOKEN)
+    server = client.servers.get_by_id(server_id)
+    previous_server_location = server.datacenter.location
+    #info about previous server
+    SSH_KEY = 'GCP'
+    SERVER_LOCATION = previous_server_location
+    SERVER_NAME = f'{SERVER_LOCATION}-{int(time.time())}'
+    if SERVER_LOCATION == 'ash' or SERVER_LOCATION == 'hil':
+        SERVER_TYPE = 'cpx11'
+    else:
+        SERVER_TYPE = 'cx11'
+    SERVER_IMAGE = 'docker-ce'
+    #params for new server
+    ssh_key = client.ssh_keys.get_by_name(name=SSH_KEY)
+    logging.info(f"Creating a duplicate hetzner server for a server with id {server_id} {SERVER_NAME} at {SERVER_LOCATION}.")
+    response = client.servers.create(
+        name=SERVER_NAME,
+        server_type=ServerType(name=SERVER_TYPE),
+        image=Image(name=SERVER_IMAGE),
+        location=Location(name=SERVER_LOCATION),
+        ssh_keys=[ssh_key],
+    )
+    server = response.server
+    new_server_ip = server.public_net.ipv4.ip
+    logging.info(f"Hetzner server {SERVER_NAME} created with ip {new_server_ip}, awaiting running.")
+    new_server_id = server.id
+    #new server created
+    #starting loop to create dockers on a new server
+    entries = dbu.fetch_all_for_query(cursor, 'SELECT chat_id FROM users_info_ru WHERE server_ip = %s', server_ip)
+    for (chat_id,) in entries:
+        ensure_ssh_connection(new_server_ip)
+        logging.info(f"Creating docker client connection to {new_server_ip}")
+        client = docker.DockerClient(
+            base_url=f'ssh://root@{new_server_ip}',
+        )
+        method = 'chacha20-ietf-poly1305'
+        password = str(dbu.fetch_one_for_query(cursor, 'SELECT password FROM users_info_ru WHERE chat_id = %s', chat_id))
+        server_port = str(dbu.fetch_one_for_query(cursor, 'SELECT port FROM users_info_ru WHERE chat_id = %s', chat_id))
+        logging.info(f"Running docker container with {method} {new_server_ip} {server_port}")
+        container = client.containers.run(
+            'shadowsocks/shadowsocks-libev',
+            environment={'PASSWORD': password, 'METHOD': method},
+            ports={8388: ('0.0.0.0', server_port), '8388/udp': ('0.0.0.0', server_port)},
+            detach=True,
+            restart_policy={'Name': 'always'})
+        container_id = container.id
+        uri = f'{method}:{password}@{new_server_ip}:{server_port}'
+        encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
+
 def get_invoice_json(invoice_id):
     conn = http.client.HTTPSConnection("api.cryptomus.com")
     payload = json.dumps({
@@ -164,7 +215,6 @@ def ensure_ssh_connection(server_ip):
     paramiko_client.save_host_keys(f'{str(pathlib.Path.home())}/.ssh/known_hosts')
     logging.info(f"Ssh connection to {server_ip} successfull.")
    
-
 def create_shadowsocks_server_for_user(cursor, chat_id):
     server_row = dbu.fetch_row_for_query(
         cursor, 'SELECT server_IP FROM servers WHERE server_location = (SELECT server_location FROM users_info_ru WHERE chat_id = %s) AND user_amount < 4 ORDER BY user_amount DESC LIMIT 1', chat_id)
@@ -278,7 +328,6 @@ def settle_users_on_trial(cursor):
         dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
                 TRIAL_SERVER_IP, server_port, password, encoded_uri, container_id, chat_id)
         logging.info(f"Updated db for chat {chat_id} with {TRIAL_SERVER_IP} {server_port} with uri {encoded_uri}")
-
 
 def settle_expired_users(cursor):
     now = datetime.datetime.now()

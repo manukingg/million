@@ -1,0 +1,6 @@
+{
+    "server": "128.140.34.117",
+    "server_port": "8540",
+    "password": "e0Y4plu0LB",
+    "method": "chacha20-ietf-poly1305"
+}
