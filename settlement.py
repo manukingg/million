@@ -335,7 +335,6 @@ def settle_expired_users(cursor):
     for server_ip, container_id, chat_id in entries:
         client = docker.DockerClient(
             base_url=f'ssh://root@{server_ip}',
-            use_ssh_client=True
         )
         container = client.containers.get(container_id)
         container.stop()
