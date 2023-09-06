@@ -22,6 +22,7 @@ import paramiko
 import logging
 import socks
 from docker.transport import SSHHTTPAdapter
+from google.cloud import storage
 
 def SSHHTTPAdapter_patched_connect(self):
         if self.ssh_client:
@@ -251,12 +252,27 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
         restart_policy={'Name': 'always'})
     container_id = container.id
     uri = f'{method}:{password}@{server_ip}:{server_port}'
-    encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
+    server_data = {
+        "server": f"{server_ip}",
+        "server_port": f"{server_port}",
+        "password": f"{password}",
+        "method": f"{method}" 
+    }
+    json_server_data = json.dumps(server_data, indent=4)
+    google_client = storage.Client(project='humanvpn')
+    bucket = google_client.get_bucket('humanvpn-configs')
+    blob = bucket.blob(f'{chat_id}')
+    blob.upload_from_string(json_server_data, content_type='application/json')
+    blob.cache_control = "no-cahe, max-age=0"
+    blob.patch()
+    json_url = str(blob.public_url)
+    user_url = 'ssconf' + json_url[5:]
+    #encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
     user_amount += 1
     dbu.update(cursor, 'UPDATE servers SET user_amount = %s WHERE server_IP = %s', user_amount, server_ip)
     dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
-               server_ip, server_port, password, encoded_uri, container_id, chat_id)
-    logging.info(f"Updated db for chat {chat_id} with {server_ip} {server_port} with uri {encoded_uri}")
+               server_ip, server_port, password, user_url, container_id, chat_id)
+    logging.info(f"Updated db for chat {chat_id} with {server_ip} {server_port} with uri {user_url}")
 
 def get_invoice_status(conn, invoice_id):
     try:
