@@ -218,7 +218,7 @@ def ensure_ssh_connection(server_ip):
    
 def create_shadowsocks_server_for_user(cursor, chat_id):
     server_row = dbu.fetch_row_for_query(
-        cursor, 'SELECT server_IP FROM servers WHERE server_location = (SELECT server_location FROM users_info_ru WHERE chat_id = %s) AND user_amount < 4 ORDER BY user_amount DESC LIMIT 1', chat_id)
+        cursor, 'SELECT server_IP FROM servers WHERE server_location = (SELECT server_location FROM users_info_ru WHERE chat_id = %s) AND user_amount < 20 ORDER BY user_amount DESC LIMIT 1', chat_id)
     if server_row is None:
         server_location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
         if server_location == 'msk1':
@@ -229,7 +229,7 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
     else:
         server_ip = server_row[0]
         user_amount = dbu.fetch_one_for_query(cursor, 'SELECT user_amount FROM servers WHERE server_ip = %s', server_ip)
-        if user_amount == 3:
+        if user_amount == 18:
             server_location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
             if server_location == 'msk1':
                 create_server_reg(cursor)
@@ -349,6 +349,7 @@ def settle_expired_users(cursor):
     now = datetime.datetime.now()
     entries = dbu.fetch_all_for_query(cursor, 'SELECT server_ip, container_id, chat_id FROM users_info_ru WHERE expiration_date < %s AND server_ip IS NOT NULL', now)
     for server_ip, container_id, chat_id in entries:
+        ensure_ssh_connection(server_ip)
         client = docker.DockerClient(
             base_url=f'ssh://root@{server_ip}',
         )
@@ -357,6 +358,24 @@ def settle_expired_users(cursor):
         container.remove()
         dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
         dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
+
+def check_for_location(cursor):
+    entries = dbu.fetch_all_for_query(cursor, 'SELECT server_ip, server_location FROM users_info_ru WHERE')
+    server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+    container_id = dbu.fetch_one_for_query(cursor, 'SELECT container_id FROM users_info_ru WHERE chat_id = %s', chat_id)
+    ensure_ssh_connection(server_ip)
+    client = docker.DockerClient(
+        base_url=f'ssh://root@{server_ip}'
+    )
+    container = client.containers.get(container_id)
+    container.stop()
+    container.remove()
+    dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL, server_location = %s WHERE chat_id = %s', location, chat_id)
+    dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
+    #create_shadowsocks_server_for_user(cursor, chat_id)
+    
+
+   
 
 def main():
     while True:

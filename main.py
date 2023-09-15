@@ -9,11 +9,12 @@ from dateutil.relativedelta import relativedelta
 from mixpanel import Mixpanel
 from cryptomus import Client
 import db as dbu
-from settlement import get_invoice_json, TRIAL_SERVER_IP
+from settlement import get_invoice_json, transfer_user, TRIAL_SERVER_IP
 import random
 import http.client
 import hashlib
 import requests
+import time
 
 with open('texts.json', 'r') as json_file:
     text = json.load(json_file)
@@ -299,13 +300,54 @@ def handle_callback_query(call):
             mp.track(str(call.message.chat.id), 'User entered About section', {'Button name': 'About'})
 
         if call.data == 'change_location':
+            chat_id = str(call.message.chat.id)
+            location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(button_continue_change, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                    text=text['change_location'], parse_mode='html', reply_markup=markup)
+                                    text=text['change_location'].format(location=locations[location]), parse_mode='html', reply_markup=markup)
             
         if call.data == 'continue_change':
-            pass
+            local_button_Nuremberg = types.InlineKeyboardButton(text['nuremberg'], callback_data='local_nbg1')
+            local_button_Helsinki = types.InlineKeyboardButton(text['helsinki'], callback_data='local_hel1')
+            local_button_Moscow = types.InlineKeyboardButton(text['moscow'], callback_data='local_msk1')
+            local_button_Hillsboro = types.InlineKeyboardButton(text['hillsboro'], callback_data='local_hil')
+            local_button_Ashburn = types.InlineKeyboardButton(text['ashburn'], callback_data='local_ash')
+            local_button_Falkenstein = types.InlineKeyboardButton(text['falkenstein'], callback_data='local_fsn1')
+            chat_id = str(call.message.chat.id)
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
+            mapping = {
+                "hil": local_button_Hillsboro,
+                "ash": local_button_Ashburn,
+                "nbg1": local_button_Nuremberg,
+                "fsn1": local_button_Falkenstein,
+                "hel1": local_button_Helsinki,
+                "msk1": local_button_Moscow
+            }
+            for label, button in mapping.items():
+                if label != location:
+                    markup.add(button)
+            markup.add(button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text="Выберите новую локацию", reply_markup=markup)
+            
+        if call.data == 'local_hil' or call.data == 'local_ash' or call.data == 'local_nbg1' or call.data == 'local_fsn1' or call.data == 'local_hel1' or call.data == 'local_msk1':
+            chat_id = str(call.message.chat.id)
+            new_mapping = {
+                "local_hil": "hil",
+                "local_ash": "ash",
+                "local_nbg1": "nbg1",
+                "local_fsn1": "fsn1",
+                "local_hel1": "hel1",
+                "local_msk1": 'msk1',
+            }
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_home)
+            dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s', new_mapping[call.data], chat_id)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
+                                    text=text['location_changed'].format(new_location=locations[new_mapping[call.data]]), parse_mode='html', reply_markup=markup)
+
  
     finally:
         connection.commit()
