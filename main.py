@@ -40,6 +40,7 @@ button_manage = types.InlineKeyboardButton(text['button_manage'], callback_data=
 button_instructions = types.InlineKeyboardButton(text['button_instructions'], callback_data='instructions')
 button_about = types.InlineKeyboardButton(text['button_about'], callback_data='about')
 button_prolongate = types.InlineKeyboardButton(text['button_prolongate'], callback_data='prolongate')
+button_quarterly = types.InlineKeyboardButton(text['button_quarterly'], callback_data='quarterly_subscription')
 button_monthly = types.InlineKeyboardButton(text['button_monthly'], callback_data='monthly_subscription')
 button_daily = types.InlineKeyboardButton(text['button_daily'], callback_data='daily_subscription')
 button_trial = types.InlineKeyboardButton(text['button_trial'], callback_data='trial')
@@ -159,9 +160,9 @@ def handle_callback_query(call):
             markup = types.InlineKeyboardMarkup(row_width=1)
             used_trial = dbu.fetch_one_for_query(cursor, 'SELECT used_trial FROM users_info_ru WHERE chat_id=%s', chat_id)
             if used_trial == 1:
-                markup.add(button_monthly, button_daily, button_home)
+                markup.add(button_daily, button_monthly, button_quarterly, button_home)
             else:
-                markup.add(button_monthly, button_daily, button_trial, button_home)
+                markup.add(button_trial, button_daily, button_monthly, button_quarterly, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['purchase'], parse_mode='html' ,reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User entered Purchase category', {'Button name': 'Purchase'})
@@ -182,13 +183,15 @@ def handle_callback_query(call):
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['continue'], parse_mode='html', reply_markup=markup)
 
-        if call.data == 'monthly_subscription' or call.data == 'daily_subscription':
+        if call.data == 'monthly_subscription' or call.data == 'daily_subscription' or call.data == 'quarterly_subscription':
             chat_id = str(call.message.chat.id)
             days = {
-                "monthly_subscription": 31,
+                "quarterly_subscription": 90,
+                "monthly_subscription": 30,
                 "daily_subscription": 1
             }
             amount = {
+                "quarterly_subscription": 999,
                 "monthly_subscription": 399,
                 "daily_subscription": 99
             }
@@ -196,7 +199,7 @@ def handle_callback_query(call):
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(button_Hillsboro, button_Ashburn, button_Nuremberg, button_Falkenstein, button_Helsinki, button_Moscow, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['location'], reply_markup=markup)
+                                text=text['location'], parse_mode='html' ,reply_markup=markup)
             mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
 
         if call.data == 'nbg1' or call.data == 'hel1' or call.data == 'fsn1' or call.data == 'msk1' or call.data == 'hil' or call.data == 'ash':
@@ -205,8 +208,16 @@ def handle_callback_query(call):
             markup.add(button_card, button_crypto, button_home)
             dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s',
                     call.data, call.message.chat.id)
+            location = locations[call.data]
+            days = dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id)
+            duration = {
+                1: "24 часа",
+                30: "30 дней",
+                90: "90 дней"
+            }
+            price = int(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                    text=text['method'], reply_markup=markup)
+                                    text=text['method'].format(location=location, days=duration[days], price=str(price)), parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
                 
         if call.data == 'crypto_payment':
@@ -216,8 +227,9 @@ def handle_callback_query(call):
             amount = str(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
             duration = str(dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id))
             hosted_url = create_invoice(cursor, call.message.chat.id, duration, amount)
-            markup = types.InlineKeyboardMarkup()
-            markup.add(button_home)
+            button_link = types.InlineKeyboardButton(text='Оплатить счет', url=hosted_url)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(button_home, button_link)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['invoice'].format(hosted_url=hosted_url), parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), f'User chose server {call.data}', {'Button name': f'{call.data}'})
