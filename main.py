@@ -9,7 +9,7 @@ from dateutil.relativedelta import relativedelta
 from mixpanel import Mixpanel
 from cryptomus import Client
 import db as dbu
-from settlement import get_invoice_json, transfer_user, TRIAL_SERVER_IP
+from settlement import get_invoice_json, TRIAL_SERVER_IP
 import random
 import http.client
 import hashlib
@@ -163,7 +163,7 @@ def handle_callback_query(call):
             else:
                 markup.add(button_monthly, button_daily, button_trial, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['purchase'], reply_markup=markup)
+                                text=text['purchase'], parse_mode='html' ,reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User entered Purchase category', {'Button name': 'Purchase'})
 
 
@@ -263,6 +263,13 @@ def handle_callback_query(call):
                     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['profile'].format(
                         username=username, ordered_untill=expiration_date, location=right_location, users_link=shadowsocks_link), parse_mode='html', reply_markup=markup)
                     mp.track(str(call.message.chat.id), 'User entered Profile section while active subscription', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
+            elif expiration_date is not None and expiration_date < now:
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(button_prolongate ,button_home)
+                bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
+                                      text=text['subscription_ended'], parse_mode='html', reply_markup=markup)
+                mp.track(str(call.message.chat.id), 'User entered Profile section with unactive subscription', {'Button name': 'Manage'})
+
             else:
                 invoice_count = dbu.fetch_one_for_query(
                     cursor, 'SELECT COUNT(*) from invoices where chat_id = %s and status = %s', chat_id, 'check')

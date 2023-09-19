@@ -259,8 +259,8 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
         "method": f"{method}" 
     }
     json_server_data = json.dumps(server_data, indent=4)
-    google_client = storage.Client(project='humanvpn')
-    bucket = google_client.get_bucket('humanvpn-configs')
+    google_client = storage.Client(project='imperial-rarity-398915')
+    bucket = google_client.get_bucket('humanvpn-configs1')
     blob = bucket.blob(f'{chat_id}')
     blob.upload_from_string(json_server_data, content_type='application/json')
     blob.cache_control = "no-cahe, max-age=0"
@@ -360,19 +360,21 @@ def settle_expired_users(cursor):
         dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
 
 def check_for_location(cursor):
-    entries = dbu.fetch_all_for_query(cursor, 'SELECT server_ip, server_location FROM users_info_ru WHERE')
-    server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
-    container_id = dbu.fetch_one_for_query(cursor, 'SELECT container_id FROM users_info_ru WHERE chat_id = %s', chat_id)
-    ensure_ssh_connection(server_ip)
-    client = docker.DockerClient(
-        base_url=f'ssh://root@{server_ip}'
-    )
-    container = client.containers.get(container_id)
-    container.stop()
-    container.remove()
-    dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL, server_location = %s WHERE chat_id = %s', location, chat_id)
-    dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
-    #create_shadowsocks_server_for_user(cursor, chat_id)
+    entries = dbu.fetch_all_for_query(cursor, 'SELECT DISTINCT chat_id FROM users_info_ru INNER JOIN users_database.servers ON users_info_ru.server_ip = servers.server_ip WHERE users_info_ru.server_location <> servers.server_location;')
+    for chat_id in entries:
+        server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id[0])
+        container_id = dbu.fetch_one_for_query(cursor, 'SELECT container_id FROM users_info_ru WHERE chat_id = %s', chat_id[0])
+        ensure_ssh_connection(server_ip)
+        client = docker.DockerClient(
+            base_url=f'ssh://root@{server_ip}'
+        )
+        container = client.containers.get(container_id)
+        container.stop()
+        container.remove()
+        logging.info(f'Removed docker with id {container_id} on server {server_ip} for chat_id {chat_id}')
+        dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id[0])
+        dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
+        create_shadowsocks_server_for_user(cursor, chat_id)
     
 
    
@@ -382,6 +384,7 @@ def main():
         connection = dbu.connection_pool.get_connection()
         try:
             cursor = connection.cursor()
+            check_for_location(cursor)
             settle_open_invoices(cursor)
             settle_active_users_without_server(cursor)
             settle_users_on_trial(cursor)
