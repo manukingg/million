@@ -306,6 +306,18 @@ def settle_open_invoices(cursor):
             current_expiration_date = dbu.fetch_one_for_query(
                 cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
             order_date = datetime.datetime.now()
+            server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+            container_id = dbu.fetch_one_for_query(cursor, 'SELECT container_id FROM users_info_ru WHERE chat_id = %s', chat_id)
+            if server_ip == TRIAL_SERVER_IP:
+                ensure_ssh_connection(server_ip)
+                client = docker.DockerClient(
+                    base_url=f'ssh://root@{server_ip}',
+                )
+                container = client.containers.get(container_id)
+                container.stop()
+                container.remove()
+                dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
+                dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)     
             if current_expiration_date == None or current_expiration_date < order_date:
                 expiration_date = (order_date + datetime.timedelta(days=days)).strftime('%Y-%m-%d')
             else:
@@ -340,10 +352,26 @@ def settle_users_on_trial(cursor):
             restart_policy={'Name': 'always'})
         container_id = container.id
         uri = f'{method}:{password}@{TRIAL_SERVER_IP}:{server_port}'
-        encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
+        server_data = {
+            "server": f"{TRIAL_SERVER_IP}",
+            "server_port": f"{server_port}",
+            "password": f"{password}",
+            "method": f"{method}" 
+        }
+        json_server_data = json.dumps(server_data, indent=4)
+        google_client = storage.Client(project='imperial-rarity-398915')
+        bucket = google_client.get_bucket('humanvpn-configs1')
+        blob = bucket.blob(f'{chat_id}')
+        blob.upload_from_string(json_server_data, content_type='application/json')
+        blob.cache_control = "no-cahe, max-age=0"
+        blob.patch()
+        json_url = str(blob.public_url)
+        user_url = 'ssconf' + json_url[5:]
+        dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount + 1 WHERE server_IP = %s', TRIAL_SERVER_IP)
         dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
-                TRIAL_SERVER_IP, server_port, password, encoded_uri, container_id, chat_id)
-        logging.info(f"Updated db for chat {chat_id} with {TRIAL_SERVER_IP} {server_port} with uri {encoded_uri}")
+                TRIAL_SERVER_IP, server_port, password, user_url, container_id, chat_id)
+        logging.info(f"Updated db for chat {chat_id} with {TRIAL_SERVER_IP} {server_port} with uri {user_url}")
+
 
 def settle_expired_users(cursor):
     now = datetime.datetime.now()

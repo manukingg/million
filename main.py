@@ -138,10 +138,9 @@ def handle_callback_query(call):
     connection = dbu.connection_pool.get_connection()
     try:
         cursor = connection.cursor()
-
+        
         if call.data == 'home':
             chat_id = str(call.message.chat.id)
-            
             server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
             markup = types.InlineKeyboardMarkup(row_width=2)
             if server_ip == None or server_ip == TRIAL_SERVER_IP:
@@ -271,13 +270,17 @@ def handle_callback_query(call):
                     location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
                     right_location = locations[location]
                     markup = types.InlineKeyboardMarkup(row_width=2)
-                    markup.add(button_instructions, button_change_location, button_home)
+                    markup.add(button_instructions, button_home)
+                    if server_ip != TRIAL_SERVER_IP:
+                        markup.add(button_change_location)
+                    else:
+                        right_location = locations['nbg1']
                     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['profile'].format(
                         username=username, ordered_untill=expiration_date, location=right_location, users_link=shadowsocks_link), parse_mode='html', reply_markup=markup)
                     mp.track(str(call.message.chat.id), 'User entered Profile section while active subscription', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
             elif expiration_date is not None and expiration_date < now:
                 markup = types.InlineKeyboardMarkup(row_width=1)
-                markup.add(button_prolongate ,button_home)
+                markup.add(button_prolongate, button_home)
                 bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                                       text=text['subscription_ended'], parse_mode='html', reply_markup=markup)
                 mp.track(str(call.message.chat.id), 'User entered Profile section with unactive subscription', {'Button name': 'Manage'})
@@ -309,7 +312,37 @@ def handle_callback_query(call):
             mp.track(str(call.message.chat.id), 'User entered instructions section', {'Button name': 'Instructions'})
 
         if call.data == 'prolongate':
-            pass
+            now = datetime.datetime.now()
+            chat_id = str(call.message.chat.id)
+            expiration_date = dbu.fetch_one_for_query(cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
+            if expiration_date < now or expiration_date == 'NULL':
+                status = '❌'
+                expiration_date = 'Истёк'
+            else:
+                status = '✅'
+            button_prolongate_daily = types.InlineKeyboardButton(text['button_daily'], callback_data='prolongate_daily')
+            button_prolongate_monthly = types.InlineKeyboardButton(text['button_monthly'], callback_data='prolongate_monthly')
+            button_prolongate_quarterly = types.InlineKeyboardButton(text['button_quarterly'], callback_data='prolongate_quarterly')
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_prolongate_daily, button_prolongate_monthly, button_prolongate_quarterly, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                  text=text['prolongate'].format(status=status, expiration=expiration_date), parse_mode='html', reply_markup=markup)
+    
+        if call.data == 'prolongate_daily' or call.data == 'prolongate_monthly' or call.data == 'prolongate_quarterly':
+            chat_id = str(call.message.chat.id)
+            days = {
+                'prolongate_quarterly': 90,
+                "prolongate_monthly": 30,
+                "prolongate_daily": 1
+            }
+            amount = {
+                "prolongate_quarterly": 999,
+                "prolongate_monthly": 399,
+                "prolongate_daily": 99
+            }
+            dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
+ 
+            
 
         if call.data == 'about':
             markup = types.InlineKeyboardMarkup(row_width=2)
