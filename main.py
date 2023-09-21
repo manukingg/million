@@ -283,12 +283,13 @@ def handle_callback_query(call):
                     username = call.from_user.username
                     shadowsocks_link = dbu.fetch_one_for_query(
                         cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
-                    location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
-                    right_location = locations[location]
+
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     markup.add(button_instructions, button_home)
                     if server_ip != TRIAL_SERVER_IP:
                         markup.add(button_change_location)
+                        location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
+                        right_location = locations[location]
                     else:
                         right_location = locations['nbg1']
                         markup.add(button_purchase)

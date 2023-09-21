@@ -266,7 +266,7 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
     blob.cache_control = "no-cahe, max-age=0"
     blob.patch()
     json_url = str(blob.public_url)
-    user_url = 'ssconf' + json_url[5:]
+    user_url = 'ssconf' + json_url[5:] + '#HumanVPN'
     #encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
     user_amount += 1
     dbu.update(cursor, 'UPDATE servers SET user_amount = %s WHERE server_IP = %s', user_amount, server_ip)
