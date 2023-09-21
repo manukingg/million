@@ -319,9 +319,9 @@ def settle_open_invoices(cursor):
                 dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
                 dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)     
             if current_expiration_date == None or current_expiration_date < order_date:
-                expiration_date = (order_date + datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+                expiration_date = (order_date + datetime.timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
             else:
-                expiration_date = (current_expiration_date + datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+                expiration_date = (current_expiration_date + datetime.timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
             dbu.update(cursor, 'UPDATE users_info_ru SET expiration_date = %s WHERE chat_id = %s', expiration_date, chat_id)
             dbu.update(cursor, 'UPDATE invoices SET status = %s WHERE id = %s', 'processed', invoice_id)
             

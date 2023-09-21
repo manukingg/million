@@ -291,6 +291,8 @@ def handle_callback_query(call):
                         markup.add(button_change_location)
                     else:
                         right_location = locations['nbg1']
+                        markup.add(button_purchase)
+                    expiration_date = expiration_date.strftime('%H:%M:%S %d.%m.%Y')
                     bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, text=text['profile'].format(
                         username=username, ordered_untill=expiration_date, location=right_location, users_link=shadowsocks_link), parse_mode='html', reply_markup=markup)
                     mp.track(str(call.message.chat.id), 'User entered Profile section while active subscription', {'Button name': 'Manage', 'Ordered untill': f'{expiration_date}'})
@@ -340,6 +342,7 @@ def handle_callback_query(call):
             else:
                 status = '✅'
                 markup.add(button_prolongate_daily, button_prolongate_monthly, button_prolongate_quarterly, button_home)
+            expiration_date = expiration_date.strftime('%H:%M:%S %d.%m.%Y')
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                   text=text['prolongate'].format(status=status, expiration=expiration_date), parse_mode='html', reply_markup=markup)
     
