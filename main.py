@@ -34,6 +34,10 @@ API_BASE_URL = "https://api.cryptomus.com/v1"
 CREATE_INVOICE_ENDPOINT = "/payment"
 
 # BUTTONS
+button_prolongate_daily = types.InlineKeyboardButton(text['button_daily'], callback_data='prolongate_daily')
+button_prolongate_monthly = types.InlineKeyboardButton(text['button_monthly'], callback_data='prolongate_monthly')
+button_prolongate_quarterly = types.InlineKeyboardButton(text['button_quarterly'], callback_data='prolongate_quarterly')
+button_home_from_media = types.InlineKeyboardButton(text['button_home'], callback_data='home_from_media')
 button_home = types.InlineKeyboardButton(text['button_home'], callback_data='home')
 button_purchase = types.InlineKeyboardButton(text['button_buy'], callback_data='purchase')
 button_manage = types.InlineKeyboardButton(text['button_manage'], callback_data='manage')
@@ -138,7 +142,7 @@ def handle_callback_query(call):
     connection = dbu.connection_pool.get_connection()
     try:
         cursor = connection.cursor()
-        
+
         if call.data == 'home':
             chat_id = str(call.message.chat.id)
             server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
@@ -149,6 +153,18 @@ def handle_callback_query(call):
                 markup.add(button_prolongate, button_manage, button_instructions, button_about)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['home'], reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
+
+        if call.data == 'home_from_media':
+            chat_id = str(call.message.chat.id)
+            server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            if server_ip == None or server_ip == TRIAL_SERVER_IP:
+                markup.add(button_purchase, button_manage, button_instructions, button_about)
+            else:
+                markup.add(button_prolongate, button_manage, button_instructions, button_about)
+            bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            bot.send_message(chat_id=call.message.chat.id, text=text['home'], parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
 
 
@@ -306,25 +322,24 @@ def handle_callback_query(call):
 
         if call.data == 'instructions':
             markup = types.InlineKeyboardMarkup(row_width=2)
-            markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_home)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['instructions'], parse_mode='html', reply_markup=markup)
+            markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_home_from_media)
+            bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            bot.send_animation(chat_id=call.message.chat.id, animation='CgACAgIAAxkDAAICH2UMelSK_eLfShQEwxEjrD0g-F0HAAKLMAACNPtpSOLJVHhsIWAlMAQ',
+                                caption=text['instructions'], parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User entered instructions section', {'Button name': 'Instructions'})
 
         if call.data == 'prolongate':
             now = datetime.datetime.now()
             chat_id = str(call.message.chat.id)
             expiration_date = dbu.fetch_one_for_query(cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
+            markup = types.InlineKeyboardMarkup(row_width=1)
             if expiration_date < now or expiration_date == 'NULL':
                 status = '❌'
                 expiration_date = 'Истёк'
+                markup.add(button_home)
             else:
                 status = '✅'
-            button_prolongate_daily = types.InlineKeyboardButton(text['button_daily'], callback_data='prolongate_daily')
-            button_prolongate_monthly = types.InlineKeyboardButton(text['button_monthly'], callback_data='prolongate_monthly')
-            button_prolongate_quarterly = types.InlineKeyboardButton(text['button_quarterly'], callback_data='prolongate_quarterly')
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_prolongate_daily, button_prolongate_monthly, button_prolongate_quarterly, button_home)
+                markup.add(button_prolongate_daily, button_prolongate_monthly, button_prolongate_quarterly, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                   text=text['prolongate'].format(status=status, expiration=expiration_date), parse_mode='html', reply_markup=markup)
     
@@ -340,8 +355,18 @@ def handle_callback_query(call):
                 "prolongate_monthly": 399,
                 "prolongate_daily": 99
             }
+            duration = {
+                1: "24 часа",
+                30: "30 дней",
+                90: "90 дней"
+            }
             dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
- 
+            price = int(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
+            location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_card, button_crypto, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                    text=text['method'].format(location=locations[location], days=duration[days[call.data]], price=amount[call.data]), parse_mode='html', reply_markup=markup)
             
 
         if call.data == 'about':
