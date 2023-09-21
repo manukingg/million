@@ -324,10 +324,17 @@ def handle_callback_query(call):
                     mp.track(str(call.message.chat.id), 'User entered Profile section before creating invoice', {'Button name': 'Profile'})
 
         if call.data == 'instructions':
+            chat_id = str(call.message.chat.id)
             markup = types.InlineKeyboardMarkup(row_width=2)
             markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_home_from_media)
+            gif_code = dbu.fetch_one_for_query(cursor, 'SELECT gif_code FROM users_info_ru WHERE chat_id = %s', chat_id)
             bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-            bot.send_animation(chat_id=call.message.chat.id, animation='CgACAgIAAxkDAAICH2UMelSK_eLfShQEwxEjrD0g-F0HAAKLMAACNPtpSOLJVHhsIWAlMAQ',
+            if gif_code == None:
+                gif_code = bot.send_animation(chat_id=call.message.chat.id, animation=open('instruction.gif', 'rb'),
+                                caption=text['instructions'], parse_mode='html', reply_markup=markup).animation.file_id
+                dbu.update(cursor, 'UPDATE users_info_ru SET gif_code = %s WHERE chat_id = %s', gif_code, chat_id)
+            else:
+                bot.send_animation(chat_id=call.message.chat.id, animation=gif_code,
                                 caption=text['instructions'], parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User entered instructions section', {'Button name': 'Instructions'})
 
