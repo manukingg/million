@@ -2,8 +2,6 @@ import time
 import http.client
 import db as dbu
 import docker
-import threading
-import subprocess
 import time
 import base64
 import random
@@ -42,7 +40,7 @@ SSHHTTPAdapter._connect = SSHHTTPAdapter_patched_connect
 
 logging.basicConfig(level=logging.INFO)
 
-TRIAL_SERVER_IP = '128.140.34.117'
+TRIAL_SERVER_IPS = ['128.140.34.117', '65.108.218.82', '49.13.87.220', '5.78.81.150', '5.161.81.114', '95.163.243.59']
 HETZNER_API_TOKEN = 'NOSsbf93NQYRCQsb1kr3CoSLQTXRbvVraoNSJDPjIkdZYdZSZzRUOaTt8Zi4q4BS'
 REG_API_TOKEN = 'cf78246f88c2d68091efc8daaf101764b72513fe4e01b9fbe7906c50b9fc50824211eb24eca67592d80282664ec6a08f'
 mp = Mixpanel('ba4f4c87c35eabfbb7820e21724aaa26')
@@ -50,6 +48,9 @@ DB_TABLE_NAME = 'users_info_ru'
 ALPHABET = string.ascii_letters + string.digits
 PAYMENT_KEY = 'y4FWxjLLtiR16WEsiHydXAyQ6PQioKKDwW8ECjMgQa7tj7DulwWfSoyh8gbJmdXtRaCkS6k7QqE8fX1BxJOtUJ4MRoNkPQAWQUKQDCrOmVQwuCBpY5pKvEJO3P6wSomL'
 MERCHANT_UUID = '3b89f29b-2459-4bbd-bace-2f2e14df7aed'
+
+with open('trial_servers.json', 'r') as json_file_trial_locations:
+    trial_locations = json.load(json_file_trial_locations)
 
 def duplicate_server(cursor, server_ip):
     server_id = dbu.fetch_one_for_query(cursor, 'SELECT server_id FROM servers WHERE server_IP = %s', server_ip)
@@ -251,7 +252,6 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
         detach=True,
         restart_policy={'Name': 'always'})
     container_id = container.id
-    uri = f'{method}:{password}@{server_ip}:{server_port}'
     server_data = {
         "server": f"{server_ip}",
         "server_port": f"{server_port}",
@@ -259,19 +259,20 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
         "method": f"{method}" 
     }
     json_server_data = json.dumps(server_data, indent=4)
-    google_client = storage.Client(project='imperial-rarity-398915')
-    bucket = google_client.get_bucket('humanvpn-configs1')
-    blob = bucket.blob(f'{chat_id}')
+    google_client = storage.Client(project='soy-envelope-400720')
+    bucket = google_client.get_bucket('cfg-humanvpn')
+    link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
+    unique_id = str(link)[-25:-9]
+    blob = bucket.blob(f'{unique_id}')
     blob.upload_from_string(json_server_data, content_type='application/json')
     blob.cache_control = "no-cahe, max-age=0"
     blob.patch()
     json_url = str(blob.public_url)
     user_url = 'ssconf' + json_url[5:] + '#HumanVPN'
-    #encoded_uri = 'ss://' + base64.b64encode(uri.encode('utf-8')).decode('utf-8')
     user_amount += 1
     dbu.update(cursor, 'UPDATE servers SET user_amount = %s WHERE server_IP = %s', user_amount, server_ip)
-    dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
-               server_ip, server_port, password, user_url, container_id, chat_id)
+    dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, container_id = %s WHERE chat_id = %s',
+               server_ip, server_port, password, container_id, chat_id)
     logging.info(f"Updated db for chat {chat_id} with {server_ip} {server_port} with uri {user_url}")
 
 def get_invoice_status(conn, invoice_id):
@@ -308,7 +309,7 @@ def settle_open_invoices(cursor):
             order_date = datetime.datetime.now()
             server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
             container_id = dbu.fetch_one_for_query(cursor, 'SELECT container_id FROM users_info_ru WHERE chat_id = %s', chat_id)
-            if server_ip == TRIAL_SERVER_IP:
+            if server_ip in TRIAL_SERVER_IPS:
                 ensure_ssh_connection(server_ip)
                 client = docker.DockerClient(
                     base_url=f'ssh://root@{server_ip}',
@@ -316,7 +317,7 @@ def settle_open_invoices(cursor):
                 container = client.containers.get(container_id)
                 container.stop()
                 container.remove()
-                dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
+                dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
                 dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)     
             if current_expiration_date == None or current_expiration_date < order_date:
                 expiration_date = (order_date + datetime.timedelta(days=days)).strftime('%Y-%m-%d %H:%M:%S')
@@ -333,17 +334,19 @@ def settle_active_users_without_server(cursor):
 
 def settle_users_on_trial(cursor):
     now = datetime.datetime.now()
-    entries = dbu.fetch_all_for_query(cursor, 'SELECT chat_id FROM users_info_ru WHERE expiration_date > %s AND server_ip = %s AND container_id IS NULL', now, TRIAL_SERVER_IP)
+    server_ips_list = ', '.join([f"'{ip}'" for ip in TRIAL_SERVER_IPS])
+    entries = dbu.fetch_all_for_query(cursor, f'SELECT chat_id FROM users_info_ru WHERE expiration_date > %s AND server_ip IN ({server_ips_list}) AND container_id IS NULL', now)
     for (chat_id,) in entries:
-        ensure_ssh_connection(TRIAL_SERVER_IP)
-        logging.info(f"Creating docker client connection to {TRIAL_SERVER_IP}")
+        server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+        ensure_ssh_connection(server_ip)
+        logging.info(f"Creating docker client connection to {server_ip}")
         client = docker.DockerClient(
-            base_url=f'ssh://root@{TRIAL_SERVER_IP}',
+            base_url=f'ssh://root@{server_ip}',
         )
         method = 'chacha20-ietf-poly1305'
         password = ''.join(secrets.choice(ALPHABET) for i in range(10))
         server_port = str(random.randint(1000, 10000))
-        logging.info(f"Running docker container with {method} {TRIAL_SERVER_IP} {server_port}")
+        logging.info(f"Running docker container with {method} {server_ip} {server_port}")
         container = client.containers.run(
             'shadowsocks/shadowsocks-libev',
             environment={'PASSWORD': password, 'METHOD': method},
@@ -351,26 +354,27 @@ def settle_users_on_trial(cursor):
             detach=True,
             restart_policy={'Name': 'always'})
         container_id = container.id
-        uri = f'{method}:{password}@{TRIAL_SERVER_IP}:{server_port}'
         server_data = {
-            "server": f"{TRIAL_SERVER_IP}",
+            "server": f"{server_ip}",
             "server_port": f"{server_port}",
             "password": f"{password}",
             "method": f"{method}" 
         }
         json_server_data = json.dumps(server_data, indent=4)
-        google_client = storage.Client(project='imperial-rarity-398915')
-        bucket = google_client.get_bucket('humanvpn-configs1')
-        blob = bucket.blob(f'{chat_id}')
+        google_client = storage.Client(project='soy-envelope-400720')
+        bucket = google_client.get_bucket('cfg-humanvpn')
+        link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
+        unique_id = str(link)[-25:-9]
+        blob = bucket.blob(f'{unique_id}')
         blob.upload_from_string(json_server_data, content_type='application/json')
         blob.cache_control = "no-cahe, max-age=0"
         blob.patch()
         json_url = str(blob.public_url)
-        user_url = 'ssconf' + json_url[5:]
-        dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount + 1 WHERE server_IP = %s', TRIAL_SERVER_IP)
+        user_url = 'ssconf' + json_url[5:] + '#HumanVPN'
+        dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount + 1 WHERE server_IP = %s', server_ip)
         dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s, port = %s, password = %s, link = %s, container_id = %s WHERE chat_id = %s',
-                TRIAL_SERVER_IP, server_port, password, user_url, container_id, chat_id)
-        logging.info(f"Updated db for chat {chat_id} with {TRIAL_SERVER_IP} {server_port} with uri {user_url}")
+                server_ip, server_port, password, user_url, container_id, chat_id)
+        logging.info(f"Updated db for chat {chat_id} with {server_ip} {server_port} with uri {user_url}")
 
 
 def settle_expired_users(cursor):
@@ -384,7 +388,7 @@ def settle_expired_users(cursor):
         container = client.containers.get(container_id)
         container.stop()
         container.remove()
-        dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
+        dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id)
         dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
 
 def check_for_location(cursor):
@@ -400,9 +404,13 @@ def check_for_location(cursor):
         container.stop()
         container.remove()
         logging.info(f'Removed docker with id {container_id} on server {server_ip} for chat_id {chat_id}')
-        dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, link = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id[0])
+        dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id[0])
         dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
-        create_shadowsocks_server_for_user(cursor, chat_id)
+        if server_ip not in TRIAL_SERVER_IPS: 
+            create_shadowsocks_server_for_user(cursor, chat_id)
+        else:
+            location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
+            dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s WHERE chat_id = %s', trial_locations[location])
     
 
    
@@ -420,7 +428,7 @@ def main():
         finally:
             connection.commit()
             connection.close()
-            time.sleep(10)
+            time.sleep(1)
 
 
 if __name__ == '__main__':

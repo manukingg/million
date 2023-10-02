@@ -16,7 +16,7 @@ def create_db_connection(pool_name, pool_size, host_name, user_name, user_passwo
     )
     return connection_pool
 
-connection_pool = create_db_connection('my_pool', 5, '34.65.74.129', 'root', mysql_password, 'mysql_native_password', db_name) #connecting to mysql "users_database"
+connection_pool = create_db_connection('my_pool', 5, '34.65.119.33', 'root', mysql_password, 'mysql_native_password', db_name) #connecting to mysql "users_database"
 
 def fetch_one_for_query(cursor, query, *args):
     cursor.execute(query, tuple(args))
