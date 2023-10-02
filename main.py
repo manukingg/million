@@ -447,9 +447,6 @@ def handle_callback_query(call):
                 "local_hel1": "hel1",
                 "local_msk1": 'msk1',
             }
-            server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
-            if server_ip in TRIAL_SERVER_IPS:
-                dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s')
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(button_home)
             dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s', new_mapping[call.data], chat_id)

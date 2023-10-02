@@ -406,14 +406,31 @@ def check_for_location(cursor):
         logging.info(f'Removed docker with id {container_id} on server {server_ip} for chat_id {chat_id}')
         dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = NULL, port = NULL, password = NULL, container_id = NULL WHERE chat_id = %s', chat_id[0])
         dbu.update(cursor, 'UPDATE servers SET user_amount = user_amount - 1 WHERE server_ip = %s', server_ip)
-        if server_ip not in TRIAL_SERVER_IPS: 
-            create_shadowsocks_server_for_user(cursor, chat_id)
-        else:
-            location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
-            dbu.update(cursor, 'UPDATE users_info_ru SET server_ip = %s WHERE chat_id = %s', trial_locations[location])
+        create_shadowsocks_server_for_user(cursor, chat_id)
     
+def check_for_location_trial(cursor):
+    server_ips_list = ', '.join([f"'{ip}'" for ip in TRIAL_SERVER_IPS])
+    entries = dbu.fetch_all_for_query(cursor, f'SELECT chat_id, server_ip, server_location, container_id FROM users_info_ru WHERE server_ip in ({server_ips_list})')
+    for chat_id, server_ip, location, container_id in entries:
+        if location != trial_locations[server_ip]:
+            ensure_ssh_connection(server_ip)
+            client = docker.DockerClient(
+                base_url=f'ssh://root@{server_ip}',
+            )
+            container = client.containers.get(container_id)
+            container.stop()
+            container.remove()
+            mapping = {
+                "ash": "5.161.81.114" ,
+                "hil": "5.78.81.150" ,
+                "fsn1": "49.13.87.220",
+                "hel1": "65.108.218.82",
+                "nbg1": "128.140.34.117",
+                "msk1": "95.163.243.59"
+            }
+            dbu.update(cursor, 'UPDATE users_info_ru SET port = NULL, password = NULL, container_id = NULL, server_ip = %s WHERE chat_id = %s', mapping[location], chat_id)
 
-   
+    
 
 def main():
     while True:
@@ -422,6 +439,7 @@ def main():
             cursor = connection.cursor()
             check_for_location(cursor)
             settle_open_invoices(cursor)
+            check_for_location_trial(cursor)
             settle_active_users_without_server(cursor)
             settle_users_on_trial(cursor)
             settle_expired_users(cursor)
