@@ -138,15 +138,19 @@ def send_welcome(message):
             json_url = str(blob.public_url)
             user_url = 'ssconf' + json_url[5:] + '#HumanVPN'
             dbu.update(cursor, 'UPDATE users_info_ru SET link = %s WHERE chat_id = %s', user_url, chat_id)
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(button_trial)
-        bot.send_message(message.chat.id, text['start'], parse_mode='html', reply_markup=markup)
-        mp.people_set(str(message.chat.id), {
-            '$First_name': f'{message.from_user.first_name}',
-            '$Last_name': f'{message.from_user.last_name}',
-            '$Nickname': f'{username}',
-        }, meta = {'$ignore_time': True, '$ip': 0})
-        mp.track(str(message.chat.id), 'User started bot')
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(button_trial)
+            bot.send_message(message.chat.id, text['start'], parse_mode='html', reply_markup=markup)
+            mp.people_set(str(message.chat.id), {
+                '$First_name': f'{message.from_user.first_name}',
+                '$Last_name': f'{message.from_user.last_name}',
+                '$Nickname': f'{username}',
+            }, meta = {'$ignore_time': True, '$ip': 0})
+            mp.track(str(message.chat.id), 'User started bot')
+        else:
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_home)
+            bot.send_message(message.chat.id, text['used_trial'], parse_mode='html', reply_markup=markup)
     finally:
         connection.commit()
         connection.close()
@@ -219,9 +223,9 @@ def handle_callback_query(call):
                     annotation = 'Полная версия HumanVPN'
             markup.add(button_instructions, button_about)
             bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-            bot.send_message(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['home'].format(username=username, status=status, expiration=expiration_date,
-                                                        location=location_to_display, users_link=link, annotation=annotation), parse_mode='html', reply_markup=markup)
+            bot.send_message(chat_id=call.message.chat.id, text=text['home'].format(username=username, status=status,
+                            expiration=expiration_date, location=location_to_display, users_link=link,
+                            annotation=annotation), parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
 
 
@@ -405,14 +409,6 @@ def handle_callback_query(call):
             mp.track(str(call.message.chat.id), 'User entered About section', {'Button name': 'About'})
 
         if call.data == 'change_location':
-            chat_id = str(call.message.chat.id)
-            location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_continue_change, button_home)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                    text=text['change_location'].format(location=locations[location]), parse_mode='html', reply_markup=markup)
-            
-        if call.data == 'continue_change':
             local_button_Nuremberg = types.InlineKeyboardButton(text['nuremberg'], callback_data='local_nbg1')
             local_button_Helsinki = types.InlineKeyboardButton(text['helsinki'], callback_data='local_hel1')
             local_button_Moscow = types.InlineKeyboardButton(text['moscow'], callback_data='local_msk1')
