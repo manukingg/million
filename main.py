@@ -30,7 +30,8 @@ with open('trial_servers.json', 'r') as json_file_trial_locations:
 
 # API's
 bot = telebot.TeleBot('6099520315:AAHx6SjHmf5o-nq1tsZRrsfKw8IqCe4Fgr8')  # telebot API
-payment_token = '381764678:TEST:63821'
+payment_token = '390540012:LIVE:42010'
+#payment_token = '381764678:TEST:63821'
 DB_TABLE_NAME = 'users_info_ru'
 mp = Mixpanel('ba4f4c87c35eabfbb7820e21724aaa26')
 PAYMENT_KEY = 'y4FWxjLLtiR16WEsiHydXAyQ6PQioKKDwW8ECjMgQa7tj7DulwWfSoyh8gbJmdXtRaCkS6k7QqE8fX1BxJOtUJ4MRoNkPQAWQUKQDCrOmVQwuCBpY5pKvEJO3P6wSomL'
@@ -40,6 +41,7 @@ API_BASE_URL = "https://api.cryptomus.com/v1"
 CREATE_INVOICE_ENDPOINT = "/payment"
 
 # BUTTONS
+button_reset_location = types.InlineKeyboardButton(text='🔄 Сменить локацию', callback_data='reset_location')
 button_prolongate_daily = types.InlineKeyboardButton(text['button_daily'], callback_data='prolongate_daily')
 button_prolongate_monthly = types.InlineKeyboardButton(text['button_monthly'], callback_data='prolongate_monthly')
 button_prolongate_quarterly = types.InlineKeyboardButton(text['button_quarterly'], callback_data='prolongate_quarterly')
@@ -114,6 +116,43 @@ def checkout(pre_checkout_query):
                                   error_message="Не удалось обработать платеж,"
                                                 "повторите попытку еще раз.")
 
+@bot.message_handler(content_types=['successful_payment'])
+def got_payment(message):
+    connection = dbu.connection_pool.get_connection()
+    try:
+        cursor = connection.cursor()
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(button_home)
+        chat_id = str(message.chat.id)
+        duration = int(message.successful_payment.invoice_payload)
+        current_expiration_date = dbu.fetch_one_for_query(
+                    cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
+        order_date = datetime.datetime.now()
+        if current_expiration_date == None or current_expiration_date < order_date:
+            expiration_date = (order_date + datetime.timedelta(days=duration)).strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            expiration_date = (current_expiration_date + datetime.timedelta(days=duration)).strftime('%Y-%m-%d %H:%M:%S')
+        bot.send_message(message.chat.id, text='Оплата проведена успешно.', parse_mode='html', reply_markup=markup)
+        dbu.update(cursor, 'UPDATE users_info_ru SET expiration_date = %s WHERE chat_id = %s', expiration_date, chat_id)
+
+    finally:
+        connection.commit()
+        connection.close()
+
+@bot.message_handler(commands=['link'])
+def send_link(message):
+    connection = dbu.connection_pool.get_connection()
+    try:
+        cursor = connection.cursor()
+        chat_id = str(message.chat.id)
+        link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
+        if link is not None:
+            bot.send_message(message.chat.id, text=f'`{link}`', parse_mode='markdown')
+        else:
+            bot.send_message(message.chat.id, text='Активируйте бесплатный пробный период для получения ссылки')
+    finally:
+        connection.commit()
+        connection.close()
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -126,6 +165,9 @@ def send_welcome(message):
         cursor.execute(query, (chat_id,))
         result = cursor.fetchone()
         if result is None:
+            source = message.text.split(' ')[1] if len(message.text.split(' ')) > 1 else 'dW5rbm93bg=='
+            source = base64.b64decode(source).decode('utf-8')
+            dbu.update(cursor, "INSERT INTO analytics (chat_id, source) VALUES (%s, %s)", chat_id, source)
             dbu.update(cursor, "INSERT INTO users_info_ru (chat_id, user_nickname) VALUES (%s, %s)", chat_id, username)
             google_client = storage.Client(project='soy-envelope-400720')
             bucket = google_client.get_bucket('cfg-humanvpn')
@@ -145,12 +187,46 @@ def send_welcome(message):
                 '$First_name': f'{message.from_user.first_name}',
                 '$Last_name': f'{message.from_user.last_name}',
                 '$Nickname': f'{username}',
+                '$Source': f'{source}'
             }, meta = {'$ignore_time': True, '$ip': 0})
             mp.track(str(message.chat.id), 'User started bot')
         else:
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_home)
-            bot.send_message(message.chat.id, text['used_trial'], parse_mode='html', reply_markup=markup)
+            used_trial = dbu.fetch_one_for_query(cursor, "SELECT used_trial FROM users_info_ru WHERE chat_id = %s", chat_id)
+            if used_trial == 1:
+                server_ip = dbu.fetch_one_for_query(cursor, 'SELECT server_ip FROM users_info_ru WHERE chat_id = %s', chat_id)
+                link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
+                location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
+                location_to_display = locations[location]
+                expiration_date = dbu.fetch_one_for_query(cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
+                username = message.from_user.username
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                now = datetime.datetime.now()
+                if expiration_date < now:
+                    status = 'Неактивно ❌'
+                    date_to_display = 'Истёк'
+                    annotation = 'Ваша подписка закончилась.. Всё лучшее подходит к концу. 💔\n\nНо конец старого - начало нового!\nПродлите подписку HumanVPN, нажав кнопку ниже ⬇️'
+                    markup.add(button_prolongate)
+                else:
+                    status = 'Активно ✅'
+                    markup.add(button_prolongate, button_change_location)
+                    date_to_display = expiration_date.strftime('%H:%M:%S %d/%m/%Y')
+                    if server_ip is None:
+                        status = '⚙️'
+                        annotation = 'Сервер создаётся'
+                    elif server_ip in TRIAL_SERVER_IPS:
+                        annotation = 'Пробный период HumanVPN'
+                    else:
+                        annotation = 'Полная версия HumanVPN'
+                markup.row_width = 2
+                markup.add(button_instructions, button_about)
+                bot.send_message(message.chat.id, text=text['home'].format(
+                    username=username, status=status, expiration=date_to_display,
+                    location=location_to_display, users_link=link,
+                    annotation=annotation), parse_mode='MarkDown', reply_markup=markup)
+            else:
+                markup = types.InlineKeyboardMarkup(row_width=1)
+                markup.add(button_trial)
+                bot.send_message(message.chat.id, text['start'], parse_mode='html', reply_markup=markup)
     finally:
         connection.commit()
         connection.close()
@@ -169,29 +245,29 @@ def handle_callback_query(call):
             location_to_display = locations[location]
             expiration_date = dbu.fetch_one_for_query(cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
             username = call.from_user.username
-            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup = types.InlineKeyboardMarkup(row_width=1)
             now = datetime.datetime.now()
             if expiration_date < now:
                 status = 'Неактивно ❌'
-                expiration_date = 'Истёк'
+                date_to_display = 'Истёк'
                 annotation = 'Ваша подписка закончилась.. Всё лучшее подходит к концу. 💔\n\nНо конец старого - начало нового!\nПродлите подписку HumanVPN, нажав кнопку ниже ⬇️'
                 markup.add(button_prolongate)
             else:
                 status = 'Активно ✅'
+                markup.add(button_prolongate, button_change_location)
+                date_to_display = str(expiration_date.strftime('%H:%M:%S %d/%m/%Y')) + ' (UTC)'
                 if server_ip is None:
                     status = '⚙️'
                     annotation = 'Сервер создаётся'
-                    markup.add(button_prolongate, button_manage)
                 elif server_ip in TRIAL_SERVER_IPS:
                     annotation = 'Пробный период HumanVPN'
-                    markup.add(button_purchase, button_manage)
                 else:
-                    markup.add(button_prolongate, button_manage)
                     annotation = 'Полная версия HumanVPN'
+            markup.row_width = 2
             markup.add(button_instructions, button_about)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['home'].format(username=username, status=status, expiration=expiration_date,
-                                                        location=location_to_display, users_link=link, annotation=annotation), parse_mode='html', reply_markup=markup)
+                                text=text['home'].format(username=username, status=status, expiration=date_to_display,
+                                                        location=location_to_display, users_link=link, annotation=annotation), parse_mode='MarkDown', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
 
         if call.data == 'home_from_media':
@@ -202,36 +278,48 @@ def handle_callback_query(call):
             location_to_display = locations[location]
             expiration_date = dbu.fetch_one_for_query(cursor, 'SELECT expiration_date FROM users_info_ru WHERE chat_id = %s', chat_id)
             username = call.from_user.username
-            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup = types.InlineKeyboardMarkup(row_width=1)
             now = datetime.datetime.now()
             if expiration_date < now:
                 status = 'Неактивно ❌'
-                expiration_date = 'Истёк'
+                date_to_display = 'Истёк'
                 annotation = 'Оплатите подписку, чтобы получить доступ к HumanVPN'
-                markup.add(button_prolongate, button_manage)
+                markup.add(button_prolongate)
             else:
                 status = 'Активно ✅'
+                markup.add(button_prolongate, button_change_location)
+                date_to_display = str(expiration_date.strftime('%H:%M:%S %d/%m/%Y')) + ' (UTC)'
                 if server_ip is None:
                     status = '⚙️'
                     annotation = 'Сервер создаётся'
-                    markup.add(button_prolongate, button_manage)
                 elif server_ip in TRIAL_SERVER_IPS:
                     annotation = 'Пробный период HumanVPN'
-                    markup.add(button_purchase, button_manage)
                 else:
-                    markup.add(button_prolongate, button_manage)
                     annotation = 'Полная версия HumanVPN'
+            markup.row_width = 2
             markup.add(button_instructions, button_about)
-            bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            try: 
+                bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except telebot.apihelper.ApiTelegramException as e:
+                pass
             bot.send_message(chat_id=call.message.chat.id, text=text['home'].format(username=username, status=status,
-                            expiration=expiration_date, location=location_to_display, users_link=link,
-                            annotation=annotation), parse_mode='html', reply_markup=markup)
+                            expiration=date_to_display, location=location_to_display, users_link=link,
+                            annotation=annotation), parse_mode='MarkDown', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User came home', {'Button name': f'{call.data}'})
 
 
     # Purchase logics --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
         if call.data == 'trial':
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            button_in_russia = types.InlineKeyboardButton(text=text['button_in_russia'], callback_data='65.108.218.82')
+            button_outside_russia = types.InlineKeyboardButton(text=text['button_outside_russia'], callback_data='95.163.243.59')
+            button_more = types.InlineKeyboardButton(text=text['button_more'], callback_data='trial_extended')
+            markup.add(button_in_russia, button_outside_russia, button_more)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['trial'], parse_mode='html', reply_markup=markup)     
+            mp.track(str(call.message.chat.id), 'User activates trial', {'Button name': f'{call.data}'})
+            
+        if call.data == 'trial_extended':
             markup = types.InlineKeyboardMarkup(row_width=1)
             hel = types.InlineKeyboardButton(text=text['helsinki'], callback_data='65.108.218.82')
             msk = types.InlineKeyboardButton(text=text['moscow'], callback_data='95.163.243.59')
@@ -239,77 +327,36 @@ def handle_callback_query(call):
             ash = types.InlineKeyboardButton(text=text['ashburn'], callback_data='5.161.81.114')
             fsn = types.InlineKeyboardButton(text=text['falkenstein'], callback_data='49.13.87.220')
             nbg = types.InlineKeyboardButton(text=text['nuremberg'], callback_data='128.140.34.117')
-            markup.add(hel, msk, hil, ash, fsn, nbg)
+            button_back = types.InlineKeyboardButton(text='Назад ⬅️', callback_data='trial')
+            markup.add(hel, msk, hil, ash, fsn, nbg, button_back)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['trial'], parse_mode='html', reply_markup=markup)
+                                text=text['trial_extended'], parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User expanded locations', {'Button name': f'{call.data}'})
 
         if call.data == '65.108.218.82' or call.data == '95.163.243.59' or call.data == '5.78.81.150' or call.data == '5.161.81.114' or call.data == '49.13.87.220' or call.data == '128.140.34.117':
             chat_id = str(call.message.chat.id)
             location = trial_locations[call.data]
             dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s', location, chat_id)
             markup = types.InlineKeyboardMarkup(row_width=2)
-            markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_continue)
+            markup.add(button_ios, button_android, button_macos, button_windows)
+            markup.row_width = 1
+            markup.add(button_home_from_media)
             trial_expiration_date = datetime.datetime.now() + datetime.timedelta(hours=24)
             date_to_display = trial_expiration_date.strftime('%H:%M:%S %d.%m.%Y')
             link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
-            location_to_display = locations[location]
-            dbu.update(cursor, 'UPDATE users_info_ru SET expiration_date = %s, server_ip = %s, used_trial = 1 WHERE chat_id = %s', trial_expiration_date, call.data, chat_id)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['continue'].format(date=date_to_display, location=location_to_display, link=link), parse_mode='html', reply_markup=markup)
-        
-        if call.data == 'continue':
-            pass
-
-        if call.data == 'purchase':
-            chat_id = str(call.message.chat.id)
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            used_trial = dbu.fetch_one_for_query(cursor, 'SELECT used_trial FROM users_info_ru WHERE chat_id=%s', chat_id)
-            if used_trial == 1:
-                markup.add(button_daily, button_monthly, button_quarterly, button_home)
-            else:
-                markup.add(button_trial, button_daily, button_monthly, button_quarterly, button_home)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['purchase'], parse_mode='html' ,reply_markup=markup)
-            mp.track(str(call.message.chat.id), 'User entered Purchase category', {'Button name': 'Purchase'})
-
-
-        if call.data == 'monthly_subscription' or call.data == 'daily_subscription' or call.data == 'quarterly_subscription':
-            chat_id = str(call.message.chat.id)
-            days = {
-                "quarterly_subscription": 90,
-                "monthly_subscription": 30,
-                "daily_subscription": 1
-            }
-            amount = {
-                "quarterly_subscription": 999,
-                "monthly_subscription": 399,
-                "daily_subscription": 99
-            }
-            dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_Hillsboro, button_Ashburn, button_Nuremberg, button_Falkenstein, button_Helsinki, button_Moscow, button_home)
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text=text['location'], parse_mode='html' ,reply_markup=markup)
-            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
-
-        if call.data == 'nbg1' or call.data == 'hel1' or call.data == 'fsn1' or call.data == 'msk1' or call.data == 'hil' or call.data == 'ash':
-            chat_id = str(call.message.chat.id)
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_card, button_crypto, button_home)
-            dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s',
-                    call.data, call.message.chat.id)
-            location = locations[call.data]
-            days = dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id)
-            duration = {
-                1: "24 часа",
-                30: "30 дней",
-                90: "90 дней"
-            }
-            price = int(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
-            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                    text=text['method'].format(location=location, days=duration[days], price=str(price)), parse_mode='html', reply_markup=markup)
-            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
-                
+            instruction_text = '🔥 Ваш пробный период активирован на 24 часа.\n\n' + text['instructions'].format(users_link=link)
+            try: 
+                bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except telebot.apihelper.ApiTelegramException as e:
+                bot.send_animation(chat_id=call.message.chat.id, animation=gif_code,
+                                caption=instruction_text, parse_mode='MarkDown', reply_markup=markup)
+            emoji = bot.send_message(chat_id=call.message.chat.id, text='⏳')
+            gif_code = bot.send_animation(chat_id=call.message.chat.id, animation=open('instruction.gif', 'rb'),
+                            caption=instruction_text, parse_mode='MarkDown', reply_markup=markup).animation.file_id
+            bot.delete_message(chat_id=call.message.chat.id, message_id=emoji.message_id)
+            dbu.update(cursor, 'UPDATE users_info_ru SET expiration_date = %s, server_ip = %s, used_trial = 1, gif_code = %s WHERE chat_id = %s', trial_expiration_date, call.data, gif_code, chat_id)
+            mp.track(str(call.message.chat.id), f'User chose server trial server {trial_locations[call.data]}', {'Button name': f'{call.data}'})
+              
         if call.data == 'crypto_payment':
             chat_id = str(call.message.chat.id)
             dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = %s WHERE chat_id = %s',
@@ -322,21 +369,26 @@ def handle_callback_query(call):
             markup.add(button_home, button_link)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text=text['invoice'].format(hosted_url=hosted_url), parse_mode='html', reply_markup=markup)
-            mp.track(str(call.message.chat.id), f'User chose server {call.data}', {'Button name': f'{call.data}'})
+            mp.track(str(call.message.chat.id), f'User chose crypto payment', {'Button name': f'{call.data}'})
 
         if call.data =='card_payment':
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_home)
             chat_id = str(call.message.chat.id)
             dbu.update(cursor, 'UPDATE users_info_ru SET payment_method = %s WHERE chat_id = %s', call.data, chat_id) 
             amount = int(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
             duration = str(dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id))
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                  text=text['card_payment'], parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose card payment, amount {amount}', {'Button name': f'{call.data}'})
             bot.send_invoice(
                 chat_id=chat_id,
                 title=f'Оплата подписки HumanVPN {duration} день',
-                description='Поддерживаем оплату Российскими картами МИР',
-                invoice_payload='HUMAN VPN',
+                description='Поддерживаем оплату Российскими картами',
+                invoice_payload=f'{duration}',
                 provider_token=payment_token,
                 currency='rub',
-                prices=[LabeledPrice(label=f'Human VPN subscription', amount = amount * 100)]
+                prices=[LabeledPrice(label=f'Human VPN subscription', amount = amount * 100)],
             )
 
         # Manage my account logics
@@ -354,18 +406,24 @@ def handle_callback_query(call):
         if call.data == 'instructions':
             chat_id = str(call.message.chat.id)
             markup = types.InlineKeyboardMarkup(row_width=2)
-            markup.add(button_ios, button_android, button_macos, button_windows, button_linux, button_home_from_media)
+            markup.add(button_ios, button_android, button_macos, button_windows)
+            markup.row_width = 1
+            markup.add(button_home_from_media)
+            link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
             gif_code = dbu.fetch_one_for_query(cursor, 'SELECT gif_code FROM users_info_ru WHERE chat_id = %s', chat_id)
-            bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            try: 
+                bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except telebot.apihelper.ApiTelegramException as e:
+                pass
             if gif_code == None:
                 emoji = bot.send_message(chat_id=call.message.chat.id, text='⏳')
                 gif_code = bot.send_animation(chat_id=call.message.chat.id, animation=open('instruction.gif', 'rb'),
-                                caption=text['instructions'], parse_mode='html', reply_markup=markup).animation.file_id
+                                caption=text['instructions'], parse_mode='MarkDown', reply_markup=markup).animation.file_id
                 bot.delete_message(chat_id=call.message.chat.id, message_id=emoji.message_id)
                 dbu.update(cursor, 'UPDATE users_info_ru SET gif_code = %s WHERE chat_id = %s', gif_code, chat_id)
             else:
                 bot.send_animation(chat_id=call.message.chat.id, animation=gif_code,
-                                caption=text['instructions'], parse_mode='html', reply_markup=markup)
+                                caption=text['instructions'].format(users_link = link), parse_mode='MarkDown', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User entered instructions section', {'Button name': 'Instructions'})
 
         if call.data == 'prolongate':
@@ -374,32 +432,51 @@ def handle_callback_query(call):
             markup.add(button_prolongate_daily, button_prolongate_monthly, button_prolongate_quarterly, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                   text=text['prolongate'], parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User entered prolongate section', {'Button name': f'{call.data}'})
     
         if call.data == 'prolongate_daily' or call.data == 'prolongate_monthly' or call.data == 'prolongate_quarterly':
             chat_id = str(call.message.chat.id)
             days = {
                 'prolongate_quarterly': 90,
                 "prolongate_monthly": 30,
-                "prolongate_daily": 1
+                "prolongate_daily": 7
             }
             amount = {
-                "prolongate_quarterly": 999,
-                "prolongate_monthly": 399,
-                "prolongate_daily": 39
+                "prolongate_quarterly": 799,
+                "prolongate_monthly": 299,
+                "prolongate_daily": 99
             }
             duration = {
-                1: "24 часа",
+                7: "7 дней",
                 30: "30 дней",
                 90: "90 дней"
             }
             dbu.update(cursor, 'UPDATE users_info_ru SET duration_days = %s, amount = %s WHERE chat_id = %s', days[call.data], amount[call.data], chat_id)
-            price = int(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
             location = dbu.fetch_one_for_query(cursor, 'SELECT server_location FROM users_info_ru WHERE chat_id = %s', chat_id)
             markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(button_card, button_crypto, button_home)
+            markup.add(button_card, button_crypto, button_reset_location, button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                     text=text['method'].format(location=locations[location], days=duration[days[call.data]], price=amount[call.data]), parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose {days}-days subscription', {'Button name': f'{call.data}'})
             
+        if call.data == 'reset_location':
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(button_Hillsboro, button_Ashburn, button_Nuremberg, button_Falkenstein, button_Helsinki, button_Moscow, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                text=text['location'], parse_mode='html' ,reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User resets location', {'Button name': f'{call.data}'})
+            
+        if call.data == 'nbg1' or call.data == 'hel1' or call.data == 'fsn1' or call.data == 'msk1' or call.data == 'hil' or call.data == 'ash':
+            chat_id = str(call.message.chat.id)
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s',
+                    call.data, call.message.chat.id)
+            duration = dbu.fetch_one_for_query(cursor, 'SELECT duration_days FROM users_info_ru WHERE chat_id = %s', chat_id)
+            amount = str(dbu.fetch_one_for_query(cursor, 'SELECT amount FROM users_info_ru WHERE chat_id = %s', chat_id))
+            markup.add(button_card, button_crypto, button_reset_location, button_home)
+            bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
+                                    text=text['method'].format(location=locations[call.data], days=duration, price=amount), parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User chose {call.data}', {'Button name': f'{call.data}'})
 
         if call.data == 'about':
             markup = types.InlineKeyboardMarkup(row_width=2)
@@ -432,6 +509,7 @@ def handle_callback_query(call):
             markup.add(button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
                                 text="Выберите новую локацию", reply_markup=markup)
+            mp.track(str(call.message.chat.id), 'User changes location', {'Button name': f'{call.data}'})
             
         if call.data == 'local_hil' or call.data == 'local_ash' or call.data == 'local_nbg1' or call.data == 'local_fsn1' or call.data == 'local_hel1' or call.data == 'local_msk1':
             chat_id = str(call.message.chat.id)
@@ -448,6 +526,7 @@ def handle_callback_query(call):
             dbu.update(cursor, 'UPDATE users_info_ru SET server_location = %s WHERE chat_id = %s', new_mapping[call.data], chat_id)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id, 
                                     text=text['location_changed'].format(new_location=locations[new_mapping[call.data]]), parse_mode='html', reply_markup=markup)
+            mp.track(str(call.message.chat.id), f'User changed location on {new_mapping[call.data]}', {'Button name': f'{call.data}'})
 
  
     finally:
