@@ -265,7 +265,7 @@ def create_shadowsocks_server_for_user(cursor, chat_id):
     unique_id = str(link)[-25:-9]
     blob = bucket.blob(f'{unique_id}')
     blob.upload_from_string(json_server_data, content_type='application/json')
-    blob.cache_control = "no-cahe, max-age=0"
+    blob.cache_control = "no-cache, max-age=0"
     blob.patch()
     json_url = str(blob.public_url)
     user_url = 'ssconf' + json_url[5:] + '#HumanVPN'
@@ -367,7 +367,7 @@ def settle_users_on_trial(cursor):
         unique_id = str(link)[-25:-9]
         blob = bucket.blob(f'{unique_id}')
         blob.upload_from_string(json_server_data, content_type='application/json')
-        blob.cache_control = "no-cahe, max-age=0"
+        blob.cache_control = "no-cache, max-age=0"
         blob.patch()
         json_url = str(blob.public_url)
         user_url = 'ssconf' + json_url[5:] + '#HumanVPN'

@@ -147,14 +147,14 @@ def send_link(message):
         chat_id = str(message.chat.id)
         link = dbu.fetch_one_for_query(cursor, 'SELECT link FROM users_info_ru WHERE chat_id = %s', chat_id)
         if link is not None:
-            bot.send_message(message.chat.id, text=f'`{link}`', parse_mode='markdown')
+            bot.send_message(message.chat.id, text=f'`{link}`\n*👆 Нажмите, чтобы скопировать*', parse_mode='markdown')
         else:
             bot.send_message(message.chat.id, text='Активируйте бесплатный пробный период для получения ссылки')
     finally:
         connection.commit()
         connection.close()
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'home'])
 def send_welcome(message):
     connection = dbu.connection_pool.get_connection()
     try:
@@ -175,7 +175,7 @@ def send_welcome(message):
             unique_id_short = unique_id[:16]
             blob = bucket.blob(f'{unique_id_short}')
             blob.upload_from_string('', content_type='application/json') 
-            blob.cache_control = "no-cahe, max-age=0"
+            blob.cache_control = "no-cache, max-age=0"
             blob.patch()
             json_url = str(blob.public_url)
             user_url = 'ssconf' + json_url[5:] + '#HumanVPN'
@@ -508,7 +508,7 @@ def handle_callback_query(call):
                     markup.add(button)
             markup.add(button_home)
             bot.edit_message_text(chat_id=call.message.chat.id, message_id=call.message.message_id,
-                                text="Выберите новую локацию", reply_markup=markup)
+                                text=text['change_location'].format(location=locations[location]), parse_mode='html', reply_markup=markup)
             mp.track(str(call.message.chat.id), 'User changes location', {'Button name': f'{call.data}'})
             
         if call.data == 'local_hil' or call.data == 'local_ash' or call.data == 'local_nbg1' or call.data == 'local_fsn1' or call.data == 'local_hel1' or call.data == 'local_msk1':
